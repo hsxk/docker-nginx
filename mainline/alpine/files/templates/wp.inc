@@ -23,9 +23,7 @@ location ~* /wp-login\.php|/wp-admin/((?!(admin-ajax\.php|images/)).)*$ {
 
     location ~ [^/]\.php(/|$) {
         include /etc/nginx/conf.d/fastcgi.inc;
-        include /etc/nginx/naxsi.conf;
     }
-    include /etc/nginx/naxsi.conf;
 }
 
 location ~ [^/]\.php(/|$) {
@@ -35,5 +33,4 @@ location ~ [^/]\.php(/|$) {
     }
 
     include conf.d/fastcgi_cache.inc;
-    include /etc/nginx/naxsi.conf;
 }
