@@ -1,4 +1,4 @@
-FROM --platform=$BUILDPLATFORM alpine:latest
+FROM --platform=$BUILDPLATFORM alpine:3.18
 LABEL maintainer="KeXin Hao<haokexin1214@gmail.com>"
 
 ENV NGINX_VERSION 1.26.0
