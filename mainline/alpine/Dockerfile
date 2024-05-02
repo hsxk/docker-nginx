@@ -37,6 +37,8 @@ ENV NGINX_DEPS gnupg \
     libuuid \
     util-linux-dev \
     zlib-dev \
+    pcre2 \
+    pcre2-dev \
     libmaxminddb-dev \
     go
 
@@ -130,6 +132,7 @@ RUN : \
     --with-http_perl_module \
     --with-pcre-jit \
     --with-openssl=/usr/lib \
+    --with-pcre \
     --add-module=./extensions/ngx_cache_purge \
     --add-module=./extensions/ngx_brotli \
     --add-module=./extensions/headers-more-nginx-module \
