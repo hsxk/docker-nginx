@@ -129,6 +129,7 @@ RUN : \
     --with-http_geoip_module \
     --with-http_perl_module \
     --with-pcre-jit \
+    --with-openssl=/usr/lib \
     --add-module=./extensions/ngx_cache_purge \
     --add-module=./extensions/ngx_brotli \
     --add-module=./extensions/headers-more-nginx-module \
