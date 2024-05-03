@@ -132,8 +132,6 @@ RUN : \
     --with-http_perl_module \
     --with-pcre-jit \
     --with-pcre \
-    --with-http_quic_module \
-    --with-stream_quic_module \
     --add-module=./extensions/ngx_cache_purge \
     --add-module=./extensions/ngx_brotli \
     --add-module=./extensions/headers-more-nginx-module \
