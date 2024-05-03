@@ -1,4 +1,4 @@
-FROM --platform=$BUILDPLATFORM alpine:3.18
+FROM --platform=$BUILDPLATFORM alpine:latest
 LABEL maintainer="KeXin Hao<haokexin1214@gmail.com>"
 
 ENV NGINX_VERSION 1.26.0
@@ -168,22 +168,23 @@ RUN : \
     && ln -s ../../usr/lib/nginx/modules /etc/nginx/modules \
     # && ln -sf /dev/stdout /var/log/nginx/access.log \
     # && ln -sf /dev/stderr /var/log/nginx/error.log \
+    && apk add curl \
     && : # END of RUN
 
-ADD mainline/alpine/files/nginx.conf /etc/nginx/nginx.conf
-ADD mainline/alpine/files/fastcgi_params /etc/nginx/fastcgi_params
+COPY mainline/alpine/files/nginx.conf /etc/nginx/nginx.conf
+COPY mainline/alpine/files/fastcgi_params /etc/nginx/fastcgi_params
 COPY mainline/alpine/files/templates/* /etc/nginx/conf.d/
 COPY mainline/alpine/files/ssl/* /etc/letsencrypt/
 
-EXPOSE 80
-EXPOSE 443
+EXPOSE 80/udp 80/tcp
+EXPOSE 443/udp 443/tcp
 
 VOLUME /var/www/html
 VOLUME /etc/letsencrypt
 VOLUME /var/log/nginx
 VOLUME /etc/nginx/conf.d/
 
-HEALTHCHECK --interval=5s --timeout=5s CMD curl -I https://127.0.0.1/healthcheck || exit 1
+HEALTHCHECK --interval=5s --timeout=1s CMD curl -I https://127.0.0.1/healthcheck || exit 1
 STOPSIGNAL SIGQUIT
 
 CMD ["/bin/sh", "-c", "while :; do sleep 30d & wait ${!}; nginx -s reload; done & nginx -g \"daemon off;\""]
