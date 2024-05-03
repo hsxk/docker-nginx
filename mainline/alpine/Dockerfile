@@ -132,6 +132,8 @@ RUN : \
     --with-http_perl_module \
     --with-pcre-jit \
     --with-pcre \
+    --with-http_quic_module \
+    --with-stream_quic_module \
     --add-module=./extensions/ngx_cache_purge \
     --add-module=./extensions/ngx_brotli \
     --add-module=./extensions/headers-more-nginx-module \
@@ -144,8 +146,8 @@ RUN : \
     -Wno-unused-parameter \
     -Wno-stringop-truncation \
     -Wno-stringop-overflow \
-    -I./extensions/boringssl/include' \
-    && ./configure $CONF --with-cc-opt="$CFLAGS" --with-ld-opt='-L./extensions/boringssl/build/ssl -L./extensions/boringssl/build/crypto'  \
+    -I../extensions/boringssl/include' \
+    && ./configure $CONF --with-cc-opt="$CFLAGS" --with-ld-opt='-L../extensions/boringssl/build/ssl -L../extensions/boringssl/build/crypto'  \
     \
     # build
     && make -j$(getconf _NPROCESSORS_ONLN) \
