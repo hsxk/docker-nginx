@@ -33,4 +33,4 @@ jobs:
           context: .
           file: mainline/alpine/Dockerfile
           push: true
-          tags: hsxk/nginx:${{ steps.extract_tag.outputs.tag_name/refs\/tags\// }}
+          tags: hsxk/nginx:${{ steps.extract_tag.outputs.tag_name.gsub('refs/tags/', '') }}
