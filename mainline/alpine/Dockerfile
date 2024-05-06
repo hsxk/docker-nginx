@@ -162,6 +162,7 @@ RUN : \
     | awk 'system("[ -e /usr/local/lib/" $1 " ]") == 0 { next } { print "so:" $1 }' \
     )" \
     && apk add --no-cache --virtual .nginx-rundeps $runDeps tzdata openssl \
+    && mkdir -p /etc/letsencrypt \
     && openssl rand 80 > /etc/letsencrypt/session_ticket.key \
     && openssl dhparam -out /etc/letsencrypt/dhparam.pem 2048 \
     && apk del --purge .builddep \
