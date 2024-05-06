@@ -22,15 +22,10 @@ jobs:
           username: ${{ secrets.DOCKER_USERNAME }}
           password: ${{ secrets.DOCKER_PASSWORD }}
 
-      - name: Extract tag name
-        id: extract_tag
-        run: echo "::set-output name=tag_name::${{ github.ref }}"
-        shell: bash
-
       - name: Build and push Docker image
         uses: docker/build-push-action@v2
         with:
           context: .
           file: mainline/alpine/Dockerfile
           push: true
-          tags: hsxk/nginx:${{ steps.extract_tag.outputs.tag_name.gsub('refs/tags/', '') }}
+          tags: hsxk/nginx:${{ github.ref_name }}
