@@ -162,6 +162,8 @@ RUN : \
     | awk 'system("[ -e /usr/local/lib/" $1 " ]") == 0 { next } { print "so:" $1 }' \
     )" \
     && apk add --no-cache --virtual .nginx-rundeps $runDeps tzdata openssl \
+    && openssl rand 80 > /etc/letsencrypt/session_ticket.key \
+    && openssl dhparam -out /etc/letsencrypt/dhparam.pem 2048 \
     && apk del --purge .builddep \
     \
     && rm -rf /tmp/build /tmp/*.patch \
@@ -184,7 +186,6 @@ VOLUME /etc/letsencrypt
 VOLUME /var/log/nginx
 VOLUME /etc/nginx/conf.d/
 
-HEALTHCHECK --interval=5s --timeout=1s CMD curl -I https://127.0.0.1/healthcheck || exit 1
 STOPSIGNAL SIGQUIT
 
 CMD ["/bin/sh", "-c", "while :; do sleep 30d & wait ${!}; nginx -s reload; done & nginx -g \"daemon off;\""]
