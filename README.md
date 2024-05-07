@@ -4,24 +4,16 @@ This repository contains a Dockerfile to build a NGINX image with additional mod
 
 ## Features
 
-* Alpine Linux version: 3.18
-* NGINX version: 1.25.1
+* Alpine Linux version: latest
+* NGINX version: 1.26.0
 * Additional modules:
   - ngx_cache_purge (version 2.3)
-  - ngx_brotli (version 1.0.0rc)
   - headers-more-nginx-module (version 0.34)
-  - naxsi (version 1.3)
-  - nginx-module-vts (version 0.2.2)
-  - ngx_http_geoip2_module (version 3.4)
   - http_v3_module （with boringssl）
 * SSL/TLS support with Let's Encrypt certificates
 * Healthcheck endpoint at /healthcheck
 * Exposed ports: 80 (HTTP) and 443 (HTTPS)
 * Configurable volumes for website content, Let's Encrypt certificates, and NGINX logs
-
-## Download Maxmind GeoLite2 Database (optional)
-
-The free GeoLite2 databases are available from [Maxminds website](http://dev.maxmind.com/geoip/geoip2/geolite2/) (requires signing up)
 
 ## Build and Run
 
@@ -36,7 +28,7 @@ docker build -t nginx .
 To run the container based on the built image, use the following command:
 
 ```sh
-docker run -d -p 80:80 -p 443:443 -v /path/to/website:/var/www/html -v /path/to/certificates:/etc/letsencrypt -v /path/to/logs:/var/log/nginx nginx
+docker run -d -p 80:80/tcp -p 80:80/udp -p 443:443/tcp -p 443:443/udp -v /path/to/website:/var/www/html -v /path/to/certificates:/etc/letsencrypt -v /path/to/logs:/var/log/nginx nginx
 ```
 
 Make sure to replace /path/to/website, /path/to/certificates, and /path/to/logs with the actual paths on your host machine.
@@ -48,7 +40,6 @@ The NGINX configuration files and templates can be found in the files directory.
 * nginx.conf: Main NGINX configuration file.
 * fastcgi_params: FastCGI configuration parameters.
 * templates/: Directory containing additional NGINX configuration templates.
-* naxsi.conf: NAXSI configuration file.
 * ssl/: Directory containing SSL/TLS certificates, ssl_dhparam file and ssl_session_ticket_key file. Place your Let's Encrypt certificates, ssl_dhparam file and ssl_session_ticket_key file in this directory.
   - ssl_dhparam file: This is the file used for Diffie-Hellman parameters. You can generate this file using OpenSSL tool to enhance the security of SSL/TLS connections. To generate the DH parameters, you can use the `openssl` command-line tool. Here's an example command to generate a 2048-bit DH parameter file:
     ```sh
