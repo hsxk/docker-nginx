@@ -28,4 +28,6 @@ jobs:
           context: .
           file: mainline/alpine/Dockerfile
           push: true
-          tags: hsxk/nginx:${{ github.ref_name }}
+          tags: |
+            hsxk/nginx:${{ github.ref_name }}
+            hsxk/nginx:latest
