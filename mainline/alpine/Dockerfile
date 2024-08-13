@@ -183,7 +183,6 @@ EXPOSE 80/udp 80/tcp
 EXPOSE 443/udp 443/tcp
 
 VOLUME /var/www/html
-VOLUME /etc/letsencrypt
 VOLUME /var/log/nginx
 VOLUME /etc/nginx/conf.d/
 
