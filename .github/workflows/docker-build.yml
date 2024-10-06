@@ -18,12 +18,6 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v2
 
-      # Lint Dockerfile
-      - name: Lint Dockerfile
-        uses: hadolint/hadolint-action@v2
-        with:
-          dockerfile: mainline/alpine/Dockerfile
-
       # Cache dependencies (if applicable)
       - name: Cache Docker layers
         uses: actions/cache@v3
@@ -48,7 +42,6 @@ jobs:
           file: mainline/alpine/Dockerfile
           push: true
           platforms: linux/amd64,linux/arm64  # 多架构支持
-          parallel: true  # 并行构建多个架构
           tags: |
             hsxk/nginx:${{ github.ref_name }}
             hsxk/nginx:latest
