@@ -58,9 +58,6 @@ jobs:
           cache-to: |
             type=registry,ref=hsxk/nginx:cache-linux-amd64,mode=max
             type=registry,ref=hsxk/nginx:cache-linux-arm64,mode=max
-        retry:
-          max-attempts: 3
-          delay-seconds: 10
 
       # Run integration tests (if applicable)
       - name: Run integration tests
