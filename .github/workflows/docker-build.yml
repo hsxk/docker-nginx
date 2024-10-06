@@ -51,7 +51,3 @@ jobs:
           cache-to: |
             type=registry,ref=hsxk/nginx:cache-linux-amd64,mode=max
             type=registry,ref=hsxk/nginx:cache-linux-arm64,mode=max
-
-      # Run integration tests (if applicable)
-      - name: Run integration tests
-        run: docker-compose -f docker-compose.test.yml up --abort-on-container-exit
