@@ -10,24 +10,58 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+      # Checkout repository
       - name: Checkout repository
-        uses: actions/checkout@v2
+        uses: actions/checkout@v3
 
+      # Set up Docker Buildx
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v1
+        uses: docker/setup-buildx-action@v2
 
+      # Lint Dockerfile
+      - name: Lint Dockerfile
+        uses: hadolint/hadolint-action@v2
+        with:
+          dockerfile: mainline/alpine/Dockerfile
+
+      # Cache dependencies (if applicable)
+      - name: Cache Docker layers
+        uses: actions/cache@v3
+        with:
+          path: /path/to/cache
+          key: ${{ runner.os }}-build-${{ github.sha }}
+          restore-keys: |
+            ${{ runner.os }}-build-
+
+      # Login to Docker Hub
       - name: Login to Docker Hub
-        uses: docker/login-action@v1
+        uses: docker/login-action@v2  # 升级到 v2，支持 Node.js 16/20
         with:
           username: ${{ secrets.DOCKER_USERNAME }}
           password: ${{ secrets.DOCKER_PASSWORD }}
 
-      - name: Build and push Docker image
-        uses: docker/build-push-action@v2
+      # Build and push multi-platform Docker image
+      - name: Build and push multi-platform Docker image
+        uses: docker/build-push-action@v3  # 升级到 v3，支持多架构
         with:
           context: .
           file: mainline/alpine/Dockerfile
           push: true
+          platforms: linux/amd64,linux/arm64  # 多架构支持
+          parallel: true  # 并行构建多个架构
           tags: |
             hsxk/nginx:${{ github.ref_name }}
             hsxk/nginx:latest
+          cache-from: |
+            type=registry,ref=hsxk/nginx:cache-linux-amd64
+            type=registry,ref=hsxk/nginx:cache-linux-arm64
+          cache-to: |
+            type=registry,ref=hsxk/nginx:cache-linux-amd64,mode=max
+            type=registry,ref=hsxk/nginx:cache-linux-arm64,mode=max
+        retry:
+          max-attempts: 3
+          delay-seconds: 10
+
+      # Run integration tests (if applicable)
+      - name: Run integration tests
+        run: docker-compose -f docker-compose.test.yml up --abort-on-container-exit
