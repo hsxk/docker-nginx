@@ -5,7 +5,7 @@ This repository contains a Dockerfile to build a NGINX image with additional mod
 ## Features
 
 * Alpine Linux version: latest
-* NGINX version: 1.27.2
+* NGINX version: 1.28.0
 * Additional modules:
   - ngx_cache_purge (version 2.3)
   - headers-more-nginx-module (version 0.34)
