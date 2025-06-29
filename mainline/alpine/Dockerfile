@@ -31,7 +31,6 @@ ENV NGINX_DEPS gnupg \
     geoip-dev \
     gd-dev \
     brotli-dev \
-    ruby-etc \
     ruby-dev \
     fontconfig-dev \
     libuuid \
@@ -94,7 +93,6 @@ RUN : \
     --http-fastcgi-temp-path=/var/cache/nginx/fastcgi_temp \
     --http-uwsgi-temp-path=/var/cache/nginx/uwsgi_temp \
     --http-scgi-temp-path=/var/cache/nginx/scgi_temp \
-    --modules-path=/usr/lib64/nginx/modules \
     --with-poll_module \
     --with-threads \
     --with-http_degradation_module \
@@ -120,15 +118,12 @@ RUN : \
     --with-stream_ssl_preread_module \
     --with-stream_realip_module \
     --with-stream_geoip_module \
-    --with-http_slice_module \
     --with-mail \
     --with-mail_ssl_module \
     --with-compat \
     --with-file-aio \
     --with-http_v2_module \
     --with-http_v3_module \
-    --with-http_image_filter_module \
-    --with-http_geoip_module \
     --with-http_perl_module \
     --with-pcre-jit \
     --with-pcre \
