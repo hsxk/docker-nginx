@@ -1,7 +1,7 @@
 FROM --platform=$BUILDPLATFORM alpine:latest
 LABEL maintainer="KeXin Hao<haokexin1214@gmail.com>"
 
-ENV NGINX_VERSION 1.28.0
+ENV NGINX_VERSION 1.29.0
 
 ENV NGINX_DEPS gnupg \
     ca-certificates \
