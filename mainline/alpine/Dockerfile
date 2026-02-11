@@ -1,7 +1,7 @@
 FROM --platform=$BUILDPLATFORM alpine:latest
 LABEL maintainer="KeXin Hao<haokexin1214@gmail.com>"
 
-ENV NGINX_VERSION 1.29.0
+ENV NGINX_VERSION 1.29.5
 
 ENV NGINX_DEPS gnupg \
     ca-certificates \
@@ -53,7 +53,7 @@ RUN : \
     && apk add --no-cache --virtual .builddep ${NGINX_DEPS} \
     && mkdir /tmp/build \
     && cd /tmp/build \
-    && curl -fSL http://nginx.org/download/nginx-${NGINX_VERSION}.tar.gz -o nginx.tar.gz \
+    && curl -fSLo nginx.tar.gz https://nginx.org/download/nginx-${NGINX_VERSION}.tar.gz \
     && tar xf nginx.tar.gz \
     && mkdir nginx-${NGINX_VERSION}/extensions \
     && cd ./nginx-${NGINX_VERSION}/extensions \
@@ -75,7 +75,7 @@ RUN : \
     && tar xf boringssl.tar.gz -C ./boringssl \
     && cd ./boringssl/build \
     && cmake .. \
-    && make  \ 
+    && make \
     && cd ../../.. \
     && CC=/usr/bin/cc \
     && CXX=/usr/bin/c++ \
@@ -151,15 +151,29 @@ RUN : \
     \
     # remove pkg
     && runDeps="$( \
-    scanelf --needed --nobanner --format '%n#p' /usr/sbin/nginx /usr/lib/nginx/modules/*.so /tmp/envsubst \
+    scanelf --needed --nobanner --format '%n#p' /usr/sbin/nginx /usr/lib/nginx/modules/*.so \
     | tr ',' '\n' \
     | sort -u \
     | awk 'system("[ -e /usr/local/lib/" $1 " ]") == 0 { next } { print "so:" $1 }' \
     )" \
     && apk add --no-cache --virtual .nginx-rundeps $runDeps tzdata openssl \
     && mkdir -p /etc/letsencrypt \
-    && openssl rand 80 > /etc/letsencrypt/session_ticket.key \
+    && openssl req -x509 -nodes -newkey rsa:2048 -days 3650 \
+       -subj '/CN=time2log.com' \
+       -addext 'subjectAltName=DNS:time2log.com,DNS:*.time2log.com' \
+       -keyout /etc/letsencrypt/private.pem \
+       -out /etc/letsencrypt/certificate.pem \
+    && openssl req -x509 -nodes -newkey rsa:2048 -days 3650 \
+       -subj '/CN=immich.time2log.com' \
+       -addext 'subjectAltName=DNS:immich.time2log.com' \
+       -keyout /etc/letsencrypt/private_immich.pem \
+       -out /etc/letsencrypt/certificate_immich.pem \
     && openssl dhparam -out /etc/letsencrypt/dhparam.pem 2048 \
+    && chmod 600 /etc/letsencrypt/private.pem /etc/letsencrypt/private_immich.pem \
+    && chmod 644 /etc/letsencrypt/certificate.pem /etc/letsencrypt/certificate_immich.pem /etc/letsencrypt/dhparam.pem \
+    && mkdir -p /var/cache/nginx /var/log/nginx /var/www/html \
+    && chown -R nginx:nginx /var/cache/nginx /var/log/nginx /var/www/html \
+    && chmod 755 /var/cache/nginx /var/log/nginx /var/www/html \
     && apk del --purge .builddep \
     \
     && rm -rf /tmp/build /tmp/*.patch \
@@ -172,7 +186,6 @@ RUN : \
 COPY mainline/alpine/files/nginx.conf /etc/nginx/nginx.conf
 COPY mainline/alpine/files/fastcgi_params /etc/nginx/fastcgi_params
 COPY mainline/alpine/files/templates/* /etc/nginx/conf.d/
-COPY mainline/alpine/files/ssl/* /etc/letsencrypt/
 
 EXPOSE 80/udp 80/tcp
 EXPOSE 443/udp 443/tcp
@@ -180,6 +193,7 @@ EXPOSE 443/udp 443/tcp
 VOLUME /var/www/html
 VOLUME /var/log/nginx
 VOLUME /etc/nginx/conf.d/
+VOLUME /etc/letsencrypt
 
 STOPSIGNAL SIGQUIT
 
