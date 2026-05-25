@@ -1,3 +1,5 @@
 .DS_Store
-mainline/alpine/files/ssl/*.pem
-!mainline/alpine/files/ssl/.gitkeep
+www/
+*.pem
+*.key
+*.crt

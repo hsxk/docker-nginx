@@ -1,0 +1,44 @@
+version: "3.9"
+
+services:
+  nginx:
+    build:
+      context: .
+      dockerfile: mainline/alpine/Dockerfile
+    image: my-nginx:latest
+    container_name: nginx
+    restart: unless-stopped
+    ports:
+      - "80:80/tcp"
+      - "443:443/tcp"
+      - "443:443/udp"    # ← required for HTTP/3 (QUIC)
+    volumes:
+      # No conf.d mount by default — the image ships a built-in fallback vhost
+      # at /usr/share/nginx-defaults that the entrypoint installs when conf.d
+      # is empty. `docker compose up` will boot into "It works." on :443.
+      #
+      # To serve real sites, copy examples/conf.d/<one>.conf, edit the
+      # `server_name` and `ssl_certificate*` lines, then mount your own dir:
+      #
+      #   - ./my-conf.d:/etc/nginx/conf.d:ro
+      #
+      # The shipped examples reference example.com / app.example.com /
+      # wp.example.com — mounting them as-is will fail `nginx -t` because the
+      # certs don't exist. They're templates, not a runnable bundle.
+
+      # TLS certificates. In production point this at certbot's live dir.
+      - letsencrypt:/etc/letsencrypt
+
+      # Web root (static assets + Let's Encrypt webroot challenges).
+      - ./www:/var/www/html:ro
+    # ulimit so worker_connections * worker_processes fits.
+    ulimits:
+      nofile:
+        soft: 65535
+        hard: 65535
+    # sysctls for QUIC (set on the HOST or via privileged compose if needed):
+    # sysctl net.core.rmem_max=2500000
+    # sysctl net.core.wmem_max=2500000
+
+volumes:
+  letsencrypt:
