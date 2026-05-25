@@ -1,7 +1,8 @@
 # syntax=docker/dockerfile:1.7
 #
 # Hardened NGINX image with HTTP/3 (QUIC), Brotli, headers-more, cache-purge.
-# Built from source against BoringSSL for QUIC support.
+# Built from source against quictls (OpenSSL 3.x + Cloudflare's QUIC server
+# API patches) for HTTP/3 support.
 #
 # Optional modules (off by default — flip the ARG to "1"):
 #   ENABLE_ZSTD     zstd compression (tokers/zstd-nginx-module)
@@ -42,10 +43,16 @@ ARG NGX_BROTLI_REF=a71f9312c2deb28875acc7bacfdd5695a111aa53
 ARG NGX_CACHE_PURGE_REPO=https://github.com/nginx-modules/ngx_cache_purge
 ARG NGX_CACHE_PURGE_REF=285354eddd5675c765ba2b79dac09f5d3065b22f
 
-# Pin BoringSSL. Bump when you want a newer one.
-# Alternative QUIC backends: quictls/openssl (versioned), or OpenSSL 3.5+
-# native QUIC server API (since 2024-Q4) — see notes at the bottom of README.
-ARG BORINGSSL_REF=0b04d3d8d77a3c84a1ec18786a83d44d266073e7
+# QUIC backend: quictls/openssl — OpenSSL 3.x + Cloudflare's QUIC server API
+# patches. nginx mainline ≥1.25 with --with-http_v3_module expects exactly
+# this API (SSL_set_quic_method, SSL_provide_quic_data, ...), so quictls is
+# the path of least resistance until OpenSSL 3.5+'s native QUIC server API
+# stabilises and nginx mainline switches over.
+#
+# Built via nginx's own --with-openssl=DIR mechanism, which runs quictls'
+# ./Configure + make as part of the nginx build. No -I/-L gymnastics.
+ARG QUICTLS_VERSION=3.3.0-quic1
+ARG QUICTLS_SHA256=78d675d94c0ac3a8b44073f0c2b373d948c5afd12b25c9e245262f563307a566
 
 # Optional modules — versions used only when their ENABLE_* arg is "1".
 ARG ZSTD_NGINX_REPO=https://github.com/tokers/zstd-nginx-module
@@ -67,10 +74,13 @@ ARG ENABLE_VTS=0
 
 # Build-only deps. Note: no gd/libpng/freetype/xpm/tiff/perl/xslt — those
 # would only be needed for image_filter / perl / xslt modules we don't build.
+# No openssl/openssl-dev either: we build quictls from source via nginx's
+# --with-openssl=DIR (it runs ./Configure && make for us), and we don't want
+# the system libssl/libcrypto to leak into the link line.
 RUN apk add --no-cache --virtual .build \
-      build-base cmake go git \
+      build-base perl git \
       ca-certificates curl \
-      openssl openssl-dev linux-headers \
+      linux-headers \
       pcre2-dev zlib-dev brotli-dev \
       libmaxminddb-dev
 
@@ -100,10 +110,11 @@ RUN set -eux; \
     tar -xzf headers-more.tgz && mv "headers-more-nginx-module-${HEADERS_MORE_VERSION}" headers-more; \
     rm -f headers-more.tgz; \
     \
-    curl -fSLo boringssl.tar.gz \
-      "https://boringssl.googlesource.com/boringssl/+archive/${BORINGSSL_REF}.tar.gz"; \
-    mkdir boringssl && tar -xzf boringssl.tar.gz -C boringssl; \
-    rm -f boringssl.tar.gz
+    curl -fSLo quictls.tar.gz \
+      "https://github.com/quictls/openssl/archive/refs/tags/openssl-${QUICTLS_VERSION}.tar.gz"; \
+    echo "${QUICTLS_SHA256}  quictls.tar.gz" | sha256sum -c -; \
+    tar -xzf quictls.tar.gz && mv "openssl-openssl-${QUICTLS_VERSION}" openssl; \
+    rm -f quictls.tar.gz
 
 # ─── Optional modules (all sources checksum-verified) ───────────────────────
 RUN set -eux; cd "/tmp/build/nginx-${NGINX_VERSION}/extensions"; \
@@ -128,13 +139,7 @@ RUN set -eux; cd "/tmp/build/nginx-${NGINX_VERSION}/extensions"; \
         tar -xzf vts.tgz && mv "nginx-module-vts-${VTS_VERSION}" vts && rm vts.tgz; \
     fi
 
-# ─── BoringSSL (Release build, parallel) ────────────────────────────────────
-RUN set -eux; \
-    cd "/tmp/build/nginx-${NGINX_VERSION}/extensions/boringssl"; \
-    cmake -Bbuild -H. -DCMAKE_BUILD_TYPE=Release; \
-    cmake --build build -j"$(nproc)" --target ssl crypto
-
-# ─── Configure & build nginx ────────────────────────────────────────────────
+# ─── Configure & build nginx (quictls is built in-tree by ./configure) ──────
 RUN set -eux; \
     cd "/tmp/build/nginx-${NGINX_VERSION}"; \
     \
@@ -178,13 +183,12 @@ RUN set -eux; \
       --add-module=./extensions/ngx_brotli \
       --add-module=./extensions/headers-more \
       $EXTRA_MODULES \
+      --with-openssl=./extensions/openssl \
+      --with-openssl-opt="no-shared no-tests enable-ktls enable-tls1_3" \
       --with-cc-opt="-O2 -fstack-protector-strong -Wformat -Werror=format-security \
                      -Wno-deprecated-declarations -Wno-cast-function-type \
-                     -Wno-unused-parameter -Wno-stringop-truncation -Wno-stringop-overflow \
-                     -I./extensions/boringssl/include" \
-      --with-ld-opt="-Wl,--as-needed \
-                     -L./extensions/boringssl/build/ssl \
-                     -L./extensions/boringssl/build/crypto"; \
+                     -Wno-unused-parameter -Wno-stringop-truncation -Wno-stringop-overflow" \
+      --with-ld-opt="-Wl,--as-needed"; \
     make -j"$(nproc)"; \
     make install; \
     strip /usr/sbin/nginx
@@ -195,7 +199,7 @@ RUN set -eux; \
 FROM alpine:${ALPINE_VERSION}
 
 LABEL org.opencontainers.image.title="docker-nginx-quic" \
-      org.opencontainers.image.description="NGINX with HTTP/3 (BoringSSL), Brotli, headers-more, cache-purge" \
+      org.opencontainers.image.description="NGINX with HTTP/3 (quictls), Brotli, headers-more, cache-purge" \
       org.opencontainers.image.source="https://github.com/your-org/docker-nginx" \
       org.opencontainers.image.licenses="GPL-3.0-or-later"
 
@@ -207,9 +211,10 @@ RUN set -eux; \
     addgroup -g 101 -S nginx; \
     adduser -S -D -H -u 101 -h /var/cache/nginx -s /sbin/nologin -G nginx -g nginx nginx; \
     # Runtime libs only. No libxslt (we don't build xslt module).
-    # The nginx binary is statically linked against BoringSSL, so it does not
-    # depend on the system openssl library — but the openssl CLI is needed
-    # by docker-entrypoint.sh to mint the fallback self-signed cert.
+    # The nginx binary is statically linked against quictls (built in-tree),
+    # so it does not depend on the system openssl library — but the openssl
+    # CLI is needed by docker-entrypoint.sh to mint the fallback self-signed
+    # cert.
     apk add --no-cache \
       ca-certificates tzdata pcre2 zlib brotli-libs openssl curl; \
     if [ "${ENABLE_ZSTD}"   = "1" ]; then apk add --no-cache zstd-libs; fi; \
