@@ -1,0 +1,11 @@
+.git
+.github
+.gitignore
+.dockerignore
+README.md
+LICENSE
+docker-compose.yml
+examples/
+www/
+**/*.md
+**/.DS_Store
