@@ -2,43 +2,95 @@ name: Docker Build
 
 on:
   push:
-    tags:
-      - '*'
+    branches: [main, master]
+    tags: ['*']
+  pull_request:
+    branches: [main, master]
+
+env:
+  IMAGE: hsxk/nginx
+  DOCKERFILE: mainline/alpine/Dockerfile
 
 jobs:
-  build:
+  # ─────────────────────────────────────────────────────────────────────────
+  # Smoke test: build every ENABLE_* permutation we ship (single-arch, no
+  # push). Catches regressions in optional-module integration before merge.
+  # ─────────────────────────────────────────────────────────────────────────
+  matrix-build:
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        flavor:
+          - { name: base,    args: "" }
+          - { name: zstd,    args: "ENABLE_ZSTD=1" }
+          - { name: njs,     args: "ENABLE_NJS=1" }
+          - { name: geoip2,  args: "ENABLE_GEOIP2=1" }
+          - { name: vts,     args: "ENABLE_VTS=1" }
+          - { name: all,     args: "ENABLE_ZSTD=1\nENABLE_NJS=1\nENABLE_GEOIP2=1\nENABLE_VTS=1" }
 
     steps:
-      # Checkout repository
-      - name: Checkout repository
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      # Set up Docker Buildx
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+      - uses: docker/setup-buildx-action@v3
 
-      # Login to Docker Hub
+      - name: Build (${{ matrix.flavor.name }})
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ${{ env.DOCKERFILE }}
+          push: false
+          load: true
+          tags: ${{ env.IMAGE }}:ci-${{ matrix.flavor.name }}
+          build-args: ${{ matrix.flavor.args }}
+          cache-from: type=gha,scope=${{ matrix.flavor.name }}
+          cache-to:   type=gha,scope=${{ matrix.flavor.name }},mode=max
+
+      - name: nginx -V (verify module list)
+        run: docker run --rm ${{ env.IMAGE }}:ci-${{ matrix.flavor.name }} nginx -V
+
+      - name: nginx -t (validate shipped config)
+        run: docker run --rm ${{ env.IMAGE }}:ci-${{ matrix.flavor.name }} nginx -t
+
+  # ─────────────────────────────────────────────────────────────────────────
+  # Release build: multi-arch, signed provenance + SBOM, pushed to Docker Hub.
+  # Runs only on tag pushes; gated behind a successful matrix-build.
+  # ─────────────────────────────────────────────────────────────────────────
+  release:
+    needs: matrix-build
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write   # for keyless OIDC signing if we later wire cosign
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+
       - name: Login to Docker Hub
         uses: docker/login-action@v3
         with:
           username: ${{ secrets.DOCKER_USERNAME }}
           password: ${{ secrets.DOCKER_PASSWORD }}
 
-      # Build and push multi-platform Docker image
-      - name: Build and push multi-platform Docker image
+      - name: Build and push (multi-arch, SBOM + provenance)
         uses: docker/build-push-action@v6
         with:
           context: .
-          file: mainline/alpine/Dockerfile
+          file: ${{ env.DOCKERFILE }}
           push: true
-          platforms: linux/amd64,linux/arm64  # 多架构支持
+          platforms: linux/amd64,linux/arm64
+          provenance: mode=max
+          sbom: true
           tags: |
-            hsxk/nginx:${{ github.ref_name }}
-            hsxk/nginx:latest
+            ${{ env.IMAGE }}:${{ github.ref_name }}
+            ${{ env.IMAGE }}:latest
           cache-from: |
-            type=registry,ref=hsxk/nginx:cache-linux-amd64
-            type=registry,ref=hsxk/nginx:cache-linux-arm64
+            type=registry,ref=${{ env.IMAGE }}:cache-linux-amd64
+            type=registry,ref=${{ env.IMAGE }}:cache-linux-arm64
           cache-to: |
-            type=registry,ref=hsxk/nginx:cache-linux-amd64,mode=max
-            type=registry,ref=hsxk/nginx:cache-linux-arm64,mode=max
+            type=registry,ref=${{ env.IMAGE }}:cache-linux-amd64,mode=max
+            type=registry,ref=${{ env.IMAGE }}:cache-linux-arm64,mode=max
