@@ -1,10 +1,10 @@
 # docker-nginx-quic
 
 A small, hardened NGINX Docker image with HTTP/3 (QUIC), Brotli, headers-more,
-and FastCGI cache-purge. Built from source against **BoringSSL** for QUIC
-support, and shipped as a *toolbox*: the image gives you a sensible base
-config plus a library of include-able snippets — you bring your own site
-files in `/etc/nginx/conf.d/`.
+and FastCGI cache-purge. Built from source against **quictls** (an OpenSSL
+fork that exposes the QUIC TLS API) for HTTP/3 support, and shipped as a
+*toolbox*: the image gives you a sensible base config plus a library of
+include-able snippets — you bring your own site files in `/etc/nginx/conf.d/`.
 
 ## What's in the image
 
@@ -12,7 +12,7 @@ files in `/etc/nginx/conf.d/`.
 |-------------------------|----------------------------------|------------------------------------|
 | NGINX                   | `1.31.1`                         | tarball SHA256 verified            |
 | Alpine                  | `3.20`                           |                                    |
-| BoringSSL               | pinned commit (see Dockerfile)   | for HTTP/3                         |
+| quictls (OpenSSL fork)  | `3.3.0-quic1` (pinned)           | for HTTP/3 — swapped from BoringSSL |
 | ngx_brotli              | `google/ngx_brotli` @ pinned SHA | upstream, last update 2024-05      |
 | ngx_cache_purge         | `nginx-modules/ngx_cache_purge`  | active fork; nginx ≥1.25 compat    |
 | headers-more-nginx      | `0.34`                           | tarball SHA256 verified            |
@@ -188,7 +188,7 @@ docker-nginx/
 
 ## Verifying HTTP/3
 
-The image is built with `--with-http_v3_module` against BoringSSL — HTTP/3
+The image is built with `--with-http_v3_module` against quictls — HTTP/3
 support is compiled in. To verify it works **end-to-end**:
 
 ### 1. NGINX side
