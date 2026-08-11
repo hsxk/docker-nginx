@@ -74,9 +74,20 @@ docker build -t my-nginx \
 Activation snippets ship with the image but are NOT auto-included (a build
 without the module would otherwise fail `nginx -t`):
 
-* `/etc/nginx/snippets/zstd.conf` — add `include /etc/nginx/snippets/zstd.conf;` inside `http {}` of nginx.conf.
+Note you do **not** have to edit `nginx.conf` to do this, even though these are
+`http {}`-context directives. `/etc/nginx/conf.d/*.conf` is included from
+*inside* `http {}`, so a file you mount there can carry http-context config —
+`map`, `limit_req_zone`, `include snippets/real-ip.conf;`, any of the below.
+Name it `00-…` so it loads before the vhosts that use it.
+
+* `/etc/nginx/snippets/zstd.conf` — `include /etc/nginx/snippets/zstd.conf;` at the top of a `conf.d/00-http.conf`.
 * `/etc/nginx/snippets/geoip2.conf` — same, plus mount your GeoLite2 DB at `/etc/nginx/geoip2/`.
-* `/etc/nginx/snippets/vts-status.conf` — add the `vhost_traffic_status_zone shared:vts:10m;` directive in `http {}`, then drop the snippet into `conf.d/`.
+* `/etc/nginx/snippets/vts-status.conf` — put `vhost_traffic_status_zone shared:vts:10m;` in that same `conf.d/00-http.conf`, then drop the snippet into `conf.d/` too.
+
+If you genuinely need to change a base setting (worker counts, buffers, the log
+format), bind-mount your own file over `/etc/nginx/nginx.conf` — but start from
+the one in this repo, because the image's snippets assume the zones, maps and
+resolver it declares.
 
 All versions are `ARG`s — override at build time:
 ```sh
