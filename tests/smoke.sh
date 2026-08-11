@@ -69,7 +69,8 @@ case "$nginx_v" in
 esac
 
 echo "==> listeners"
-if docker exec "$NAME" netstat -lun 2>/dev/null | grep -q ':443'; then
+udp_listeners=$(docker exec "$NAME" netstat -lun 2>/dev/null || true)
+if grep -q ':443' <<<"$udp_listeners"; then
     pass "QUIC/UDP :443 bound"
 else
     bad "no UDP listener on :443 — HTTP/3 would be advertised but dead"

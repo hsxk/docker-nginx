@@ -85,6 +85,22 @@ jobs:
           ignore-unfixed: true
           exit-code: '0'
 
+      # Keep the already-tested base image available after the ephemeral
+      # runner exits. This lets maintainers download and run the exact CI
+      # output without rebuilding it on a development machine.
+      - name: Export tested base image
+        if: matrix.flavor.name == 'base'
+        run: docker save "${IMAGE}:ci-base" | gzip -1 > "${RUNNER_TEMP}/nginx-base.tar.gz"
+
+      - name: Upload tested base image
+        if: matrix.flavor.name == 'base'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: nginx-base-${{ github.sha }}
+          path: ${{ runner.temp }}/nginx-base.tar.gz
+          compression-level: 0
+          retention-days: 3
+
   # ─────────────────────────────────────────────────────────────────────────
   # Release build: multi-arch, signed provenance + SBOM, pushed to Docker Hub.
   # Runs only on tag pushes; gated behind a successful matrix-build.
