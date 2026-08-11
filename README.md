@@ -41,12 +41,79 @@ Every external source is pinned to either an immutable git commit SHA or a
 release tag whose tarball is SHA256-verified at build time — flip a version
 and the matching `*_SHA256` ARG together when bumping.
 
+### How this compares to the official `nginx:alpine`
+
+Worth being precise, because the gap is narrower than it used to be. As of
+1.31.3 the official image is *also* built with `--with-http_v3_module` against
+OpenSSL 3.5.7 — HTTP/3 is no longer a reason to leave it. What this image adds
+is the third-party module set, which official does not ship in any form:
+
+| | official `nginx:alpine` | this image |
+|---|---|---|
+| nginx / OpenSSL | 1.31.3 / 3.5.7 | 1.31.3 / 3.5.7 |
+| HTTP/3 (QUIC) | yes | yes |
+| Brotli | — | `ngx_brotli` |
+| `headers-more` | — | yes |
+| cache purge | — | `ngx_cache_purge` |
+| zstd / njs / GeoIP2 / VTS | — | opt-in build args |
+| mail proxy | yes | **no** (see below) |
+| config + snippet toolbox | bare default vhost | the point of this image |
+
+`--with-mail` / `--with-mail_ssl_module` are the one thing official has that this
+does not, deliberately: an SMTP/IMAP/POP3 proxy is a different daemon role,
+nothing in this image's config or snippets addresses it, and leaving it out
+keeps a protocol parser off the attack surface. Open an issue if you need it.
+
 Modules removed vs. the previous image:
 * `--with-http_image_filter_module` — pulled in `gd-dev` + `libpng-dev`, almost never used.
 * `--with-http_xslt_module` — never used here.
 * `--with-http_perl_module` — heavy perl runtime, never used.
 * `--with-http_geoip_module` — MaxMind has EOL'd the GeoIP1 DB format. Use the
   optional `ENABLE_GEOIP2` (see below) for the modern GeoIP2 / libmaxminddb path.
+
+## Upgrading from 1.31.1 or earlier
+
+Most of this release is bug fixes, but some defaults changed in ways that can
+change what your sites serve. In rough order of "will bite you".
+
+**Override security headers with `more_set_headers`, not `add_header`.** They
+moved out of `add_header` (see [Behaviour worth knowing about](#behaviour-worth-knowing-about)
+for why). The families do not see each other, so a vhost doing
+`add_header X-Frame-Options "DENY" always;` no longer replaces the default —
+the response now carries both `SAMEORIGIN` and `DENY`, which browsers treat as
+conflicting and may ignore outright. Grep your configs for `add_header` naming
+any of: `Strict-Transport-Security`, `X-Content-Type-Options`, `X-Frame-Options`,
+`Referrer-Policy`, `Permissions-Policy`, `Cross-Origin-Opener-Policy` — and
+switch those lines to `more_set_headers "Name: value";`.
+
+**HSTS lost `includeSubDomains`.** If you were relying on it, set it explicitly
+per site. Browsers that already cached the old directive keep honouring it until
+its max-age expires.
+
+**OCSP stapling is off.** Re-enable in `snippets/tls.conf` if your CA publishes
+OCSP responder URLs (Let's Encrypt no longer does).
+
+**TLS session tickets are on.** If you deliberately disabled resumption for
+forward-secrecy reasons, set `ssl_session_tickets off;` again — but read the
+note in `snippets/tls.conf` first, because on TLS 1.3 that disables resumption
+entirely rather than hardening it.
+
+**The FastCGI micro-cache no longer stores responses carrying `Set-Cookie`.**
+Expect a lower hit rate on apps that set cookies on otherwise-cacheable pages;
+this is deliberate, since the old behaviour could replay one visitor's cookie to
+everyone. See `snippets/fastcgi-cache.conf` to opt back in knowingly.
+
+**`ENABLE_NJS=1` no longer builds njs's `xml` module.** Add `ENABLE_NJS_XML=1`
+if your njs scripts parse XML. njs itself also jumped 0.8.7 → 1.0.0; check your
+scripts against its changelog.
+
+**`resolver` is derived from the container's DNS** instead of hardcoded public
+servers. If you depended on nginx resolving via 1.1.1.1 specifically, mount your
+own `/etc/nginx/resolver.conf`.
+
+**No more `VOLUME` declarations.** They created anonymous volumes on every
+`docker run` — one of which shadowed the `/dev/stdout` log symlinks. Mount
+`/etc/letsencrypt`, `/var/www/html` explicitly (the compose file does).
 
 ## Optional modules
 

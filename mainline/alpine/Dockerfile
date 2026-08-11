@@ -235,6 +235,15 @@ RUN set -eux; \
       --with-http_secure_link_module \
       --with-http_slice_module \
       --with-http_stub_status_module \
+      # Present in the official nginx image, so their absence here would be a
+      # silent regression for anyone migrating. All three are core modules with
+      # no external dependencies — they cost bytes, not attack surface.
+      #   dav  WebDAV PUT/DELETE/MKCOL/COPY/MOVE
+      #   mp4  ?start= pseudo-streaming (plain Range seeking works without it)
+      #   flv  ?start= for the legacy FLV container
+      --with-http_dav_module \
+      --with-http_mp4_module \
+      --with-http_flv_module \
       --with-stream --with-stream_ssl_module \
       --with-stream_ssl_preread_module --with-stream_realip_module \
       --add-module=./extensions/ngx_cache_purge \
