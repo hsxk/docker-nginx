@@ -67,6 +67,16 @@ ARG ENABLE_NJS=0
 ARG ENABLE_GEOIP2=0
 ARG ENABLE_VTS=0
 
+# njs sub-feature. njs/nginx/config defaults NJS_LIBXSLT to YES, which enables
+# njs's xml module and makes nginx's configure demand libxml2 + libxslt — so
+# ENABLE_NJS=1 alone fails the build with "the HTTP XSLT module requires the
+# libxml2/libxslt libraries" unless those dev packages are present. We default
+# it OFF instead of adding the libraries: njs here is for routing and header
+# rewrites, and libxml2 is a large, steady source of CVEs to carry in the
+# runtime for a feature almost nobody enabling njs is after.
+# Set to 1 if you actually parse XML in njs.
+ARG ENABLE_NJS_XML=0
+
 # Build-only deps. Note: no gd/libpng/freetype/xpm/tiff/perl/xslt — those
 # would only be needed for image_filter / perl / xslt modules we don't build.
 #
@@ -143,6 +153,9 @@ RUN set -eux; cd "/tmp/build/nginx-${NGINX_VERSION}/extensions"; \
         curl -fSLo njs.tgz "https://github.com/nginx/njs/archive/refs/tags/${NJS_VERSION}.tar.gz"; \
         echo "${NJS_SHA256}  njs.tgz" | sha256sum -c -; \
         tar -xzf njs.tgz && mv "njs-${NJS_VERSION}" njs && rm njs.tgz; \
+        if [ "${ENABLE_NJS_XML}" = "1" ]; then \
+            apk add --no-cache --virtual .njs-xml-build libxml2-dev libxslt-dev; \
+        fi; \
     fi; \
     if [ "${ENABLE_GEOIP2}" = "1" ]; then \
         curl -fSLo geoip2.tgz "https://github.com/leev/ngx_http_geoip2_module/archive/refs/tags/${GEOIP2_VERSION}.tar.gz"; \
@@ -174,6 +187,9 @@ RUN set -eux; \
 # ─── Configure & build nginx ────────────────────────────────────────────────
 RUN set -eux; \
     cd "/tmp/build/nginx-${NGINX_VERSION}"; \
+    \
+    if [ "${ENABLE_NJS_XML}" = "1" ]; then NJS_LIBXSLT=YES; else NJS_LIBXSLT=NO; fi; \
+    export NJS_LIBXSLT; \
     \
     EXTRA_MODULES=""; \
     [ "${ENABLE_ZSTD}"   = "1" ] && EXTRA_MODULES="$EXTRA_MODULES --add-module=./extensions/zstd-nginx-module"; \
@@ -237,6 +253,7 @@ LABEL org.opencontainers.image.title="docker-nginx-quic" \
 # Optional-module runtime deps need re-declaring here (ARGs reset across stages).
 ARG ENABLE_ZSTD=0
 ARG ENABLE_GEOIP2=0
+ARG ENABLE_NJS_XML=0
 
 RUN set -eux; \
     addgroup -g 101 -S nginx; \
@@ -247,8 +264,9 @@ RUN set -eux; \
     # self-signed cert. No curl: busybox wget covers the HEALTHCHECK.
     apk add --no-cache \
       ca-certificates tzdata pcre2 zlib brotli-libs openssl; \
-    if [ "${ENABLE_ZSTD}"   = "1" ]; then apk add --no-cache zstd-libs; fi; \
-    if [ "${ENABLE_GEOIP2}" = "1" ]; then apk add --no-cache libmaxminddb; fi; \
+    if [ "${ENABLE_ZSTD}"    = "1" ]; then apk add --no-cache zstd-libs; fi; \
+    if [ "${ENABLE_GEOIP2}"  = "1" ]; then apk add --no-cache libmaxminddb; fi; \
+    if [ "${ENABLE_NJS_XML}" = "1" ]; then apk add --no-cache libxml2 libxslt; fi; \
     mkdir -p /etc/nginx/snippets /etc/nginx/conf.d \
              /usr/share/nginx-defaults \
              /var/cache/nginx /var/log/nginx /var/www/html /etc/letsencrypt; \

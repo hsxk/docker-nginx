@@ -25,6 +25,9 @@ jobs:
           - { name: base,    args: "" }
           - { name: zstd,    args: "ENABLE_ZSTD=1" }
           - { name: njs,     args: "ENABLE_NJS=1" }
+          # njs's xml module is opt-in because it drags libxml2/libxslt into
+          # the runtime; build it too so the opt-in path can't rot.
+          - { name: njs-xml, args: "ENABLE_NJS=1\nENABLE_NJS_XML=1" }
           - { name: geoip2,  args: "ENABLE_GEOIP2=1" }
           - { name: vts,     args: "ENABLE_VTS=1" }
           - { name: all,     args: "ENABLE_ZSTD=1\nENABLE_NJS=1\nENABLE_GEOIP2=1\nENABLE_VTS=1" }

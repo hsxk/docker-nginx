@@ -57,6 +57,7 @@ are also pulled in automatically.
 |--------------------|-----------------------------------------------------|-----------------------------------------------------------|
 | `ENABLE_ZSTD=1`    | [tokers/zstd-nginx-module](https://github.com/tokers/zstd-nginx-module) | API / JSON-heavy traffic — Chrome ≥123, Firefox ≥126 negotiate `Accept-Encoding: zstd` and zstd is ~2–3× faster than brotli at the same ratio. |
 | `ENABLE_NJS=1`     | [nginx/njs](https://nginx.org/en/docs/njs/)         | Replace evil `if` chains with JS-based routing / header rewrites. |
+| `ENABLE_NJS_XML=1` | njs `xml` module                                    | Only if you parse XML *inside* njs. njs defaults `NJS_LIBXSLT=YES`, which makes nginx demand libxml2 + libxslt; we default it off rather than carry libxml2's CVE stream in the runtime for a feature few njs users want. |
 | `ENABLE_GEOIP2=1`  | [leev/ngx_http_geoip2_module](https://github.com/leev/ngx_http_geoip2_module) | GeoIP-based routing / rate limiting / logging.            |
 | `ENABLE_VTS=1`     | [vozlt/nginx-module-vts](https://github.com/vozlt/nginx-module-vts) | Prometheus-friendly `/status` (QPS, status, upstreams, cache). |
 
