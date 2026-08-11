@@ -116,6 +116,27 @@ done
 ct=$(grep -ci '^content-type:' <<<"$(curl -sSI "http://127.0.0.1:${HTTP_PORT}/healthz")" || true)
 check "healthz has a single Content-Type" "$ct" "1"
 
+echo "==> quic_bpf capability detection"
+# Under Docker's default capability set the answer must be "off". Getting this
+# wrong is not a subtle bug: nginx refuses to start when quic_bpf is set
+# without CAP_BPF/CAP_NET_ADMIN, so a false positive here bricks every
+# container that does not opt in. (The container being healthy above already
+# proves nginx started, which is half the assertion.)
+bpf=$(docker exec "$NAME" cat /etc/nginx/quic-bpf.conf)
+if grep -q '^quic_bpf on;' <<<"$bpf"; then
+    bad "quic_bpf enabled without the capabilities for it"
+else
+    pass "quic_bpf correctly off under default capabilities"
+fi
+
+echo "==> no startup warnings"
+# ssl_stapling used to emit one of these per certificate on every boot.
+if docker logs "$NAME" 2>&1 | grep -qi '\[warn\]'; then
+    bad "startup emits warnings: $(docker logs "$NAME" 2>&1 | grep -i '\[warn\]' | head -1)"
+else
+    pass "clean startup, no warnings"
+fi
+
 echo "==> resolver"
 resolver=$(docker exec "$NAME" cat /etc/nginx/resolver.conf)
 if grep -q '^resolver .*127\.0\.0\.11' <<<"$resolver"; then

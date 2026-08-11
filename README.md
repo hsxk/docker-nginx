@@ -11,7 +11,7 @@ include-able snippets — you bring your own site files in `/etc/nginx/conf.d/`.
 | Component               | Version (default)                | Notes                              |
 |-------------------------|----------------------------------|------------------------------------|
 | NGINX                   | `1.31.3`                         | tarball SHA256 verified            |
-| Alpine                  | `3.22`                           | oldest branch shipping OpenSSL 3.5 |
+| Alpine                  | `3.22` (pinned by digest)        | oldest branch shipping OpenSSL 3.5 |
 | OpenSSL                 | `3.5.x` (Alpine package)         | for HTTP/3 — see below             |
 | ngx_brotli              | `google/ngx_brotli` @ pinned SHA | upstream, last update 2023-10      |
 | ngx_cache_purge         | `nginx-modules/ngx_cache_purge`  | active fork; nginx ≥1.25 compat    |
@@ -258,6 +258,23 @@ docker-nginx/
   widely copied `ssl_session_tickets off;` does not harden it — it disables
   resumption outright and every modern browser pays a full handshake. See the
   reasoning and how to revert in `snippets/tls.conf`.
+* **HTTP/3 connection migration needs two capabilities.** With `reuseport`,
+  QUIC's UDP traffic is spread over one socket per worker by 4-tuple — on a
+  10-core host, 10 sockets. When a phone switches Wi-Fi → cellular the tuple
+  changes and its packets land on a worker with no state for that connection,
+  which stalls until the client gives up. nginx's `quic_bpf` routes by QUIC
+  connection ID instead and fixes it, but needs `CAP_BPF` (or `CAP_SYS_ADMIN`)
+  plus `CAP_NET_ADMIN`, which Docker does not grant by default — and nginx
+  *refuses to start* without them rather than degrading. The entrypoint
+  therefore probes the container's effective capabilities and writes
+  `/etc/nginx/quic-bpf.conf` accordingly. Grant them with
+  `docker run --cap-add BPF --cap-add NET_ADMIN` (see `cap_add` in
+  `docker-compose.yml`); force the decision with `QUIC_BPF=on|off`.
+* **OCSP stapling is off by default.** Let's Encrypt stopped publishing OCSP
+  responder URLs in 2025, so stapling is a no-op for the certificates this
+  image mostly serves — while still logging a warning per certificate on every
+  start and reload. Turn it back on in `snippets/tls.conf` if your CA publishes
+  OCSP.
 * **`quic_gso` is off by default.** UDP segmentation offload is broken on a
   number of virtual NICs, where the failure mode is not an error but silently
   dropped oversized datagrams — HTTP/3 stalls while HTTP/2 keeps working.

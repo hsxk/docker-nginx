@@ -27,8 +27,17 @@
 # Alpine 3.22 is the oldest branch shipping OpenSSL 3.5 (the QUIC-capable one)
 # and is supported until 2027-05. Do not drop below this: 3.21 and older ship
 # OpenSSL 3.3, whose QUIC API is client-only and cannot serve HTTP/3.
+#
+# Pinned by digest, not just by tag: `alpine:3.22` is a moving target, so two
+# builds of the same commit could otherwise produce different images — which
+# would make the "byte-reproducible" claim below false. The tradeoff is that
+# base security updates now need a deliberate bump; the Trivy job in CI is what
+# tells you when this pin has gone stale.
+#
+# To bump: docker buildx imagetools inspect alpine:3.22 --format '{{.Manifest.Digest}}'
 ARG ALPINE_VERSION=3.22
-FROM alpine:${ALPINE_VERSION} AS builder
+ARG ALPINE_DIGEST=sha256:14358309a308569c32bdc37e2e0e9694be33a9d99e68afb0f5ff33cc1f695dce
+FROM alpine:${ALPINE_VERSION}@${ALPINE_DIGEST} AS builder
 
 # ─── Pinned source versions (bump deliberately) ─────────────────────────────
 # All refs are pinned to immutable commit SHAs / signed release tags so the
@@ -243,7 +252,7 @@ RUN set -eux; \
 # ─────────────────────────────────────────────────────────────────────────────
 # Runtime image
 # ─────────────────────────────────────────────────────────────────────────────
-FROM alpine:${ALPINE_VERSION}
+FROM alpine:${ALPINE_VERSION}@${ALPINE_DIGEST}
 
 LABEL org.opencontainers.image.title="docker-nginx-quic" \
       org.opencontainers.image.description="NGINX with HTTP/3 (OpenSSL 3.5), Brotli, headers-more, cache-purge" \
@@ -289,6 +298,7 @@ COPY --from=builder /etc/nginx/scgi_params  /etc/nginx/scgi_params
 COPY mainline/alpine/files/nginx.conf       /etc/nginx/nginx.conf
 COPY mainline/alpine/files/fastcgi_params   /etc/nginx/fastcgi_params
 COPY mainline/alpine/files/resolver.conf    /etc/nginx/resolver.conf
+COPY mainline/alpine/files/quic-bpf.conf    /etc/nginx/quic-bpf.conf
 COPY mainline/alpine/files/snippets/        /etc/nginx/snippets/
 # Built-in fallback vhost — entrypoint installs into conf.d/ when empty.
 COPY mainline/alpine/files/default-conf.d/  /usr/share/nginx-defaults/

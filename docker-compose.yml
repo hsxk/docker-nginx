@@ -29,6 +29,22 @@ services:
 
       # Web root (static assets + Let's Encrypt webroot challenges).
       - ./www:/var/www/html:ro
+    # Uncomment to let HTTP/3 survive a client changing networks.
+    #
+    # With `reuseport` the kernel spreads QUIC's UDP traffic across one socket
+    # per worker, keyed on the 4-tuple. When a phone moves from Wi-Fi to
+    # cellular that tuple changes and its packets arrive at a worker holding no
+    # state for the connection, which stalls until the client gives up. nginx's
+    # eBPF socket selector (`quic_bpf`) routes by QUIC connection ID instead
+    # and fixes it — but the bpf() syscall and the reuseport attach need these
+    # capabilities, and nginx refuses to start without them.
+    #
+    # The entrypoint detects them, so adding these is all that's required;
+    # leaving them out is safe and simply keeps quic_bpf off.
+    # cap_add:
+    #   - BPF          # or SYS_ADMIN on kernels older than 5.8
+    #   - NET_ADMIN
+
     # ulimit so worker_connections * worker_processes fits.
     ulimits:
       nofile:

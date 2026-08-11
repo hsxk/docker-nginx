@@ -66,6 +66,25 @@ jobs:
       - name: nginx -t (validate examples/conf.d together)
         run: ./tests/validate-examples.sh ${{ env.IMAGE }}:ci-${{ matrix.flavor.name }}
 
+      # Only meaningful now that OpenSSL is an apk package. While it was a
+      # statically linked quictls, a scanner had nothing to find — no package
+      # metadata, no CVE match, an image that looked clean while carrying a
+      # TLS stack frozen in April 2024. This is what closes that loop, and
+      # what tells us the pinned Alpine base digest has gone stale.
+      #
+      # Report-only for now: a new CVE in a base package should not block a
+      # release that has nothing to do with it. Flip exit-code to 1 once the
+      # baseline is known-clean.
+      - name: Vulnerability scan (Trivy)
+        if: matrix.flavor.name == 'base'
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: ${{ env.IMAGE }}:ci-${{ matrix.flavor.name }}
+          format: table
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
+          exit-code: '0'
+
   # ─────────────────────────────────────────────────────────────────────────
   # Release build: multi-arch, signed provenance + SBOM, pushed to Docker Hub.
   # Runs only on tag pushes; gated behind a successful matrix-build.
