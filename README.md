@@ -1,8 +1,8 @@
 # docker-nginx-quic
 
 A small, hardened NGINX Docker image with HTTP/3 (QUIC), Brotli, headers-more,
-and FastCGI cache-purge. Built from source against **quictls** (an OpenSSL
-fork that exposes the QUIC TLS API) for HTTP/3 support, and shipped as a
+and FastCGI cache-purge. HTTP/3 runs on **stock OpenSSL 3.5**, linked
+dynamically against the distro package — no vendored TLS fork. Shipped as a
 *toolbox*: the image gives you a sensible base config plus a library of
 include-able snippets — you bring your own site files in `/etc/nginx/conf.d/`.
 
@@ -10,12 +10,32 @@ include-able snippets — you bring your own site files in `/etc/nginx/conf.d/`.
 
 | Component               | Version (default)                | Notes                              |
 |-------------------------|----------------------------------|------------------------------------|
-| NGINX                   | `1.31.1`                         | tarball SHA256 verified            |
-| Alpine                  | `3.20`                           |                                    |
-| quictls (OpenSSL fork)  | `3.3.0-quic1` (pinned)           | for HTTP/3 — swapped from BoringSSL |
-| ngx_brotli              | `google/ngx_brotli` @ pinned SHA | upstream, last update 2024-05      |
+| NGINX                   | `1.31.3`                         | tarball SHA256 verified            |
+| Alpine                  | `3.22`                           | oldest branch shipping OpenSSL 3.5 |
+| OpenSSL                 | `3.5.x` (Alpine package)         | for HTTP/3 — see below             |
+| ngx_brotli              | `google/ngx_brotli` @ pinned SHA | upstream, last update 2023-10      |
 | ngx_cache_purge         | `nginx-modules/ngx_cache_purge`  | active fork; nginx ≥1.25 compat    |
-| headers-more-nginx      | `0.34`                           | tarball SHA256 verified            |
+| headers-more-nginx      | `0.40`                           | tarball SHA256 verified            |
+
+### Why the QUIC backend is plain OpenSSL now
+
+Serving HTTP/3 used to require a patched TLS library, because upstream OpenSSL
+had no server-side QUIC API. That is over: OpenSSL 3.5 ships one
+(`SSL_set_quic_tls_cbs`), and nginx picks it automatically — the selection in
+`src/event/quic/ngx_event_quic.h` is a plain `OPENSSL_VERSION_NUMBER >= 3.5.1`
+check.
+
+That matters for more than tidiness. A vendored TLS stack is **frozen at the
+version you pinned and invisible to everything that looks for CVEs**: it is not
+an `apk` package, so it does not appear in the image SBOM and scanners cannot
+see it. quictls' last QUIC release is based on OpenSSL 3.3.0 (April 2024) and
+the project wound down once OpenSSL 3.5 LTS landed, so that pin was accumulating
+unpatched OpenSSL advisories that nothing would report. Linking the distro
+package means a base-image rebuild picks up Alpine's security updates.
+
+The build fails loudly rather than degrading: if the OpenSSL headers are older
+than 3.5.1, nginx would silently fall back to its `NGX_QUIC_OPENSSL_COMPAT`
+shim, so the Dockerfile compiles a version assertion before `./configure`.
 
 Every external source is pinned to either an immutable git commit SHA or a
 release tag whose tarball is SHA256-verified at build time — flip a version
@@ -112,14 +132,16 @@ docker compose up -d   # boots into the "It works." fallback
 docker-nginx/
 ├── mainline/alpine/
 │   ├── Dockerfile                  # multi-stage builder + slim runtime
-│   ├── docker-entrypoint.sh        # generates fallback self-signed cert
+│   ├── docker-entrypoint.sh        # fallback cert + vhost + resolver
 │   └── files/
 │       ├── nginx.conf              # http {} defaults — installed at /etc/nginx/
+│       ├── resolver.conf           # regenerated at boot from /etc/resolv.conf
 │       ├── fastcgi_params
 │       └── snippets/               # reusable building blocks
 │           ├── tls.conf
 │           ├── http3.conf
 │           ├── security-headers.conf
+│           ├── real-ip.conf            # opt-in, trust a proxy/CDN's XFF
 │           ├── acme-challenge.conf
 │           ├── proxy-defaults.conf
 │           ├── websocket.conf
@@ -139,6 +161,9 @@ docker-nginx/
 │       ├── 10-example-static.conf  # static site + HTTP/3 (reuseport)
 │       ├── 20-reverse-proxy.conf   # WebSocket + per-route auth rate limit
 │       └── 30-wordpress.conf       # WP + PHP-FPM + micro-cache
+├── tests/
+│   ├── smoke.sh                    # boot the image, assert it serves
+│   └── validate-examples.sh        # nginx -t over all examples together
 ├── docker-compose.yml
 └── .dockerignore
 ```
@@ -159,16 +184,17 @@ docker-nginx/
 | Snippet                          | Include where      | Purpose                                             |
 |----------------------------------|--------------------|-----------------------------------------------------|
 | `tls.conf`                       | inside `server {}` | TLS 1.2/1.3, modern ciphers, OCSP stapling          |
-| `http3.conf`                     | inside `server {}` | `Alt-Svc`, `quic_retry`, `quic_gso`                 |
-| `security-headers.conf`          | (auto, http {})    | CSP-friendly default headers                        |
+| `http3.conf`                     | inside `server {}` | `Alt-Svc`, `quic_retry` (`quic_gso` opt-in)         |
+| `security-headers.conf`          | (auto, http {})    | Default headers via `more_set_headers` — see below  |
+| `real-ip.conf`                   | inside `http {}`   | Recover client IP behind a proxy/CDN (opt-in)       |
 | `acme-challenge.conf`            | inside any server  | `/.well-known/acme-challenge/` for Let's Encrypt    |
 | `proxy-defaults.conf`            | inside `location`  | Standard proxy headers + keepalive                  |
 | `websocket.conf`                 | inside `location`  | `Upgrade`/`Connection` + 1h timeout                 |
-| `static-cache.conf`              | inside `server {}` | 30-day cache for assets + dotfile deny              |
+| `static-cache.conf`              | inside `server {}` | 30-day cache for assets + dotfile 404               |
 | `fastcgi.conf`                   | inside `\.php$`    | PHP-FPM defaults (set `$fpm_upstream` first)        |
 | `fastcgi-cache.conf`             | inside `\.php$`    | Micro-cache PHP responses                           |
 | `fastcgi-cache-purge.conf`       | inside `server {}` | `/fcache-purge/*` endpoint (IP-restricted)          |
-| `healthz.conf`                   | inside `server {}` | `GET /healthz → 200 ok` for HEALTHCHECK             |
+| `healthz.conf`                   | inside `server {}` | `GET /healthz → 200 ok` for *external* probes       |
 | `error-pages.conf`               | inside `server {}` | Branded 404 / 429 / 5xx pages from `/var/www/html/errors/` |
 | `zstd.conf`                      | inside `http {}`   | zstd compression (needs `ENABLE_ZSTD=1`)            |
 | `geoip2.conf`                    | inside `http {}`   | MaxMind GeoIP2 lookup (needs `ENABLE_GEOIP2=1`)     |
@@ -183,13 +209,71 @@ docker-nginx/
   * `req_per_ip` (100r/s) — generic, apply broadly with `limit_req zone=req_per_ip burst=20 nodelay;`
   * `auth` (1r/s) — strict, apply to `/login`, `/oauth/token`, OTP endpoints. See `examples/conf.d/20-reverse-proxy.conf`.
 * **Default-deny vhost** — `examples/conf.d/05-default-deny.conf` returns
-  `444` for any request whose `Host` header doesn't match a real vhost.
-  Prevents IP-scan leakage. Loaded before site configs via the `05-` prefix.
+  `444` for any request whose `Host` header doesn't match a real vhost, over
+  both TLS and QUIC. Prevents IP-scan leakage. Loaded before site configs via
+  the `05-` prefix. It covers `:443` only — `00-http-redirect.conf` owns `:80`,
+  because nginx permits one `default_server` per listen address and because a
+  `444` on port 80 would black-hole ACME HTTP-01 validation.
+
+## Behaviour worth knowing about
+
+* **Security headers use `more_set_headers`, not `add_header`.** `add_header`
+  does not accumulate: any `server`/`location` block declaring one of its own
+  discards every `add_header` it inherited. Several shipped snippets do exactly
+  that (`http3.conf` sets `Alt-Svc`, `static-cache.conf` sets `Cache-Control`),
+  which silently stripped the whole security-header set from TLS vhosts and
+  from every static asset. headers-more lives in a separate directive family,
+  so a downstream `add_header` can no longer clobber it — and it merges
+  properly: a `server`/`location` block declaring its own `more_set_headers`
+  gets the inherited set *plus* its own, its own applied last. Overriding one
+  header for one site is a one-liner and the rest still applies.
+* **HSTS is scoped to HTTPS and omits `includeSubDomains`.** A `map` on
+  `$https` means the header never goes out over plaintext. `includeSubDomains`
+  is a one-way door — it takes down every subdomain that is not HTTPS, for the
+  full `max-age`, with no remote undo — so it is opt-in per site. See
+  `snippets/security-headers.conf`.
+* **`resolver` is generated at boot** from the container's own
+  `/etc/resolv.conf` into `/etc/nginx/resolver.conf`. Under Docker that is the
+  embedded DNS at `127.0.0.11`, which is what makes `proxy_pass` to a variable
+  upstream resolve compose service names. Mount your own file over
+  `/etc/nginx/resolver.conf` to pin it; the entrypoint leaves non-writable
+  files alone.
+* **The HEALTHCHECK does not depend on your config.** It probes a loopback-only
+  listener on `127.0.0.1:8081` declared in `nginx.conf`, so mounting your own
+  `conf.d/` cannot make the container report unhealthy. `snippets/healthz.conf`
+  is only for external probes (a load balancer, an uptime monitor).
+* **TLS session tickets are ON.** TLS 1.3 has no session-ID resumption, so the
+  widely copied `ssl_session_tickets off;` does not harden it — it disables
+  resumption outright and every modern browser pays a full handshake. See the
+  reasoning and how to revert in `snippets/tls.conf`.
+* **`quic_gso` is off by default.** UDP segmentation offload is broken on a
+  number of virtual NICs, where the failure mode is not an error but silently
+  dropped oversized datagrams — HTTP/3 stalls while HTTP/2 keeps working.
+  Turn it on in `snippets/http3.conf` after verifying h3 on your host.
+* **Client IP behind a proxy/CDN needs `snippets/real-ip.conf`.** Without it
+  `limit_req`/`limit_conn` key every request in the world to the proxy's single
+  address. It is opt-in because `set_real_ip_from` is a trust declaration:
+  listing an address you do not control hands out IP spoofing.
+
+## Testing
+
+```sh
+docker build -t my-nginx -f mainline/alpine/Dockerfile .
+
+./tests/smoke.sh my-nginx             # boots it, asserts it actually serves
+./tests/validate-examples.sh my-nginx # nginx -t over all examples together
+```
+
+CI runs both against every `ENABLE_*` flavour. `nginx -t` alone only proves the
+config parses — the smoke test checks the things that have regressed silently
+here before (security headers surviving snippet includes, no HSTS on plaintext,
+the QUIC listener actually bound, OpenSSL new enough for the native QUIC API).
 
 ## Verifying HTTP/3
 
-The image is built with `--with-http_v3_module` against quictls — HTTP/3
-support is compiled in. To verify it works **end-to-end**:
+The image is built with `--with-http_v3_module` against OpenSSL 3.5 — HTTP/3
+support is compiled in, and the build refuses to proceed on an OpenSSL too old
+to serve it. To verify it works **end-to-end**:
 
 ### 1. NGINX side
 

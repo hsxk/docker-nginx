@@ -9,3 +9,4 @@ examples/
 www/
 **/*.md
 **/.DS_Store
+tests/

@@ -1,5 +1,3 @@
-version: "3.9"
-
 services:
   nginx:
     build:
@@ -36,6 +34,20 @@ services:
       nofile:
         soft: 65535
         hard: 65535
+
+    # STOPSIGNAL is SIGQUIT (graceful): nginx stops accepting, finishes what
+    # is in flight, then exits. Docker's default 10s grace period would SIGKILL
+    # it mid-request on anything slower — long downloads, streaming responses,
+    # WebSockets.
+    stop_grace_period: 30s
+
+    # Logs go to stdout/stderr, so without a cap the json-file driver grows
+    # until the disk is full.
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
     # sysctls for QUIC (set on the HOST or via privileged compose if needed):
     # sysctl net.core.rmem_max=2500000
     # sysctl net.core.wmem_max=2500000

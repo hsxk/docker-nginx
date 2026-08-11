@@ -52,6 +52,17 @@ jobs:
       - name: nginx -t (validate shipped config)
         run: docker run --rm ${{ env.IMAGE }}:ci-${{ matrix.flavor.name }} nginx -t
 
+      # `nginx -t` only proves the config parses. Boot it and check it serves.
+      - name: Smoke test (boot container, assert behaviour)
+        run: ./tests/smoke.sh ${{ env.IMAGE }}:ci-${{ matrix.flavor.name }}
+
+      # The example vhosts are templates that reference certs which don't
+      # exist, so they can only be validated with throwaway certs minted for
+      # exactly their server_names. They have shipped broken before (two files
+      # both claiming `default_server` on :80 — `nginx -t` rejects the pair).
+      - name: nginx -t (validate examples/conf.d together)
+        run: ./tests/validate-examples.sh ${{ env.IMAGE }}:ci-${{ matrix.flavor.name }}
+
   # ─────────────────────────────────────────────────────────────────────────
   # Release build: multi-arch, signed provenance + SBOM, pushed to Docker Hub.
   # Runs only on tag pushes; gated behind a successful matrix-build.
