@@ -1,53 +1,44 @@
 # docker-nginx-quic
 
-A small, hardened NGINX Docker image with HTTP/3 (QUIC), Brotli, headers-more,
-and FastCGI cache-purge. HTTP/3 runs on **stock OpenSSL 3.5**, linked
-dynamically against the distro package — no vendored TLS fork. Shipped as a
-*toolbox*: the image gives you a sensible base config plus a library of
-include-able snippets — you bring your own sites in `/etc/nginx/conf.d/` and
-any http-level config in `/etc/nginx/http.d/`.
+A small, hardened image built **on the official NGINX Alpine image**, with
+HTTP/3 (QUIC), Brotli, headers-more, and FastCGI cache-purge. The official
+nginx.org binary and its stock OpenSSL provide the server; this repository adds
+only ABI-matched third-party dynamic modules, configuration, and entrypoint
+behaviour. Shipped as a *toolbox*: bring sites in `/etc/nginx/conf.d/` and any
+http-level config in `/etc/nginx/http.d/`.
 
 ## What's in the image
 
 | Component               | Version (default)                | Notes                              |
 |-------------------------|----------------------------------|------------------------------------|
-| NGINX                   | `1.31.3`                         | tarball SHA256 verified            |
-| Alpine                  | `3.22` (pinned by digest)        | oldest branch shipping OpenSSL 3.5 |
-| OpenSSL                 | `3.5.x` (Alpine package)         | for HTTP/3 — see below             |
+| Base image              | `nginx:1.31.3-alpine3.24-slim`  | official image, pinned by digest   |
+| NGINX                   | `1.31.3`                         | official nginx.org APK binary      |
+| Alpine                  | `3.24`                           | inherited from the official image  |
+| OpenSSL                 | `3.5.7`                          | inherited from the official image  |
 | ngx_brotli              | `google/ngx_brotli` @ pinned SHA | upstream, last update 2023-10      |
 | ngx_cache_purge         | `nginx-modules/ngx_cache_purge`  | active fork; nginx ≥1.25 compat    |
 | headers-more-nginx      | `0.40`                           | tarball SHA256 verified            |
 
-### Why the QUIC backend is plain OpenSSL now
+### Why the base is the official image
 
-Serving HTTP/3 used to require a patched TLS library, because upstream OpenSSL
-had no server-side QUIC API. That is over: OpenSSL 3.5 ships one
-(`SSL_set_quic_tls_cbs`), and nginx picks it automatically — the selection in
-`src/event/quic/ngx_event_quic.h` is a plain `OPENSSL_VERSION_NUMBER >= 3.5.1`
-check.
+The pinned official image already supplies HTTP/3, HTTP/2, stream, threads,
+AIO, and every standard HTTP module used by this repository. Its
+nginx binary is installed from the signed nginx.org Alpine repository, so this
+project no longer rebuilds or replaces `/usr/sbin/nginx`.
 
-That matters for more than tidiness. A vendored TLS stack is **frozen at the
-version you pinned and invisible to everything that looks for CVEs**: it is not
-an `apk` package, so it does not appear in the image SBOM and scanners cannot
-see it. quictls' last QUIC release is based on OpenSSL 3.3.0 (April 2024) and
-the project wound down once OpenSSL 3.5 LTS landed, so that pin was accumulating
-unpatched OpenSSL advisories that nothing would report. Linking the distro
-package means a base-image rebuild picks up Alpine's security updates.
+Only third-party modules absent from upstream are compiled. They use
+`--add-dynamic-module` against the exact source version and configure feature
+set of the pinned official binary, then load from `/usr/lib/nginx/modules`.
+Changing `NGINX_FROM_IMAGE` therefore requires changing `NGINX_VERSION` and its
+source checksum together; the build verifies the versions match before doing
+any compilation.
 
-The build fails loudly rather than degrading: if the OpenSSL headers are older
-than 3.5.1, nginx would silently fall back to its `NGX_QUIC_OPENSSL_COMPAT`
-shim, so the Dockerfile compiles a version assertion before `./configure`.
+Every external module source is pinned to either an immutable git commit SHA or
+a release tag whose tarball is SHA256-verified.
 
-Every external source is pinned to either an immutable git commit SHA or a
-release tag whose tarball is SHA256-verified at build time — flip a version
-and the matching `*_SHA256` ARG together when bumping.
+### What this adds to official `nginx:alpine`
 
-### How this compares to the official `nginx:alpine`
-
-Worth being precise, because the gap is narrower than it used to be. As of
-1.31.3 the official image is *also* built with `--with-http_v3_module` against
-OpenSSL 3.5.7 — HTTP/3 is no longer a reason to leave it. What this image adds
-is the third-party module set, which official does not ship in any form:
+The runtime is the official image. This repository layers the following on it:
 
 | | official `nginx:alpine` | this image |
 |---|---|---|
@@ -57,13 +48,8 @@ is the third-party module set, which official does not ship in any form:
 | `headers-more` | — | yes |
 | cache purge | — | `ngx_cache_purge` |
 | zstd / njs / GeoIP2 / VTS | — | opt-in build args |
-| mail proxy | yes | **no** (see below) |
+| mail proxy | yes | yes, inherited but not configured |
 | config + snippet toolbox | bare default vhost | the point of this image |
-
-`--with-mail` / `--with-mail_ssl_module` are the one thing official has that this
-does not, deliberately: an SMTP/IMAP/POP3 proxy is a different daemon role,
-nothing in this image's config or snippets addresses it, and leaving it out
-keeps a protocol parser off the attack surface. Open an issue if you need it.
 
 Modules removed vs. the previous image:
 * `--with-http_image_filter_module` — pulled in `gd-dev` + `libpng-dev`, almost never used.
@@ -414,9 +400,8 @@ the QUIC listener actually bound, OpenSSL new enough for the native QUIC API).
 
 ## Verifying HTTP/3
 
-The image is built with `--with-http_v3_module` against OpenSSL 3.5 — HTTP/3
-support is compiled in, and the build refuses to proceed on an OpenSSL too old
-to serve it. To verify it works **end-to-end**:
+The pinned official image is built with `--with-http_v3_module` against OpenSSL
+3.5.7. To verify it works **end-to-end**:
 
 ### 1. NGINX side
 
@@ -515,7 +500,6 @@ The base config opts into every cheap-to-enable win nginx ships:
 
 | Tuning                                 | Where                          | Why                                         |
 |----------------------------------------|--------------------------------|---------------------------------------------|
-| `pcre_jit on`                          | main scope                     | JIT-compile every regex (locations, server_name). Built with `--with-pcre-jit`. |
 | `aio threads=default` + `aio_write on` | http {}                        | Offload blocking disk I/O to a 32-thread pool. Built with `--with-threads --with-file-aio`. |
 | `thread_pool default threads=32 max_queue=65536` | main scope            | Backs the `aio` directive.                  |
 | `sendfile_max_chunk 2m`                | http {}                        | One slow client can't starve a worker.      |
@@ -558,8 +542,8 @@ zstd  -k -19   dist/**/*.{html,css,js,svg}
 
 `.github/workflows/docker-build.yml` runs in two stages:
 
-* **matrix-build** — on every PR + push, builds 6 image flavors
-  (`base`, `zstd`, `njs`, `geoip2`, `vts`, `all`) on a single arch, runs
+* **matrix-build** — on every PR + push, builds 7 image flavors
+  (`base`, `zstd`, `njs`, `njs-xml`, `geoip2`, `vts`, `all`) on a single arch, runs
   `nginx -V` and `nginx -t` inside each image. No registry push. Uses GitHub
   Actions cache per-flavor so re-runs are fast.
 * **release** — on tag pushes only, builds the multi-arch (`linux/amd64`,
