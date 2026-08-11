@@ -285,7 +285,7 @@ RUN set -eux; \
     if [ "${ENABLE_ZSTD}"    = "1" ]; then apk add --no-cache zstd-libs; fi; \
     if [ "${ENABLE_GEOIP2}"  = "1" ]; then apk add --no-cache libmaxminddb; fi; \
     if [ "${ENABLE_NJS_XML}" = "1" ]; then apk add --no-cache libxml2 libxslt; fi; \
-    mkdir -p /etc/nginx/snippets /etc/nginx/conf.d \
+    mkdir -p /etc/nginx/snippets /etc/nginx/conf.d /etc/nginx/http.d \
              /usr/share/nginx-defaults \
              /var/cache/nginx /var/log/nginx /var/www/html /etc/letsencrypt; \
     chown -R nginx:nginx /var/cache/nginx /var/log/nginx /var/www/html; \

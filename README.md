@@ -4,7 +4,8 @@ A small, hardened NGINX Docker image with HTTP/3 (QUIC), Brotli, headers-more,
 and FastCGI cache-purge. HTTP/3 runs on **stock OpenSSL 3.5**, linked
 dynamically against the distro package — no vendored TLS fork. Shipped as a
 *toolbox*: the image gives you a sensible base config plus a library of
-include-able snippets — you bring your own site files in `/etc/nginx/conf.d/`.
+include-able snippets — you bring your own sites in `/etc/nginx/conf.d/` and
+any http-level config in `/etc/nginx/http.d/`.
 
 ## What's in the image
 
@@ -215,6 +216,7 @@ docker-nginx/
 │   └── files/
 │       ├── nginx.conf              # http {} defaults — installed at /etc/nginx/
 │       ├── resolver.conf           # regenerated at boot from /etc/resolv.conf
+│       ├── quic-bpf.conf           # regenerated at boot from capabilities
 │       ├── fastcgi_params
 │       └── snippets/               # reusable building blocks
 │           ├── tls.conf
@@ -242,10 +244,55 @@ docker-nginx/
 │       └── 30-wordpress.conf       # WP + PHP-FPM + micro-cache
 ├── tests/
 │   ├── smoke.sh                    # boot the image, assert it serves
-│   └── validate-examples.sh        # nginx -t over all examples together
+│   ├── validate-examples.sh        # nginx -t over all examples together
+│   ├── snippet-coverage.conf       # forces every snippet to be parsed
+│   └── http.d/                     # parse target for the http.d include
 ├── docker-compose.yml
 └── .dockerignore
 ```
+
+## Where config goes
+
+Three directories, and the distinction is worth getting right because it is the
+difference between "works" and "works regardless of filename".
+
+| Path | Included | Put here |
+|---|---|---|
+| `/etc/nginx/http.d/*.conf` | inside `http {}`, **before** conf.d | `map`, `limit_req_zone`, `upstream`, `include snippets/real-ip.conf;`, zstd/geoip2/vts activation |
+| `/etc/nginx/conf.d/*.conf` | inside `http {}`, after http.d | `server { }` blocks — your actual sites |
+| `/etc/nginx/snippets/` | wherever you `include` them | shipped building blocks; read-only, part of the image |
+
+`conf.d` is also inside `http {}`, so http-level directives there work too —
+that is what everyone did before `http.d` existed, and it keeps working. The
+catch is ordering: `conf.d/*.conf` loads alphabetically, so a `limit_req_zone`
+in `50-zones.conf` is invisible to a vhost in `10-site.conf`. `http.d` loads
+first, so nothing there is order-dependent.
+
+Neither directory is required. An absent or empty one just matches no files.
+
+```
+your-deployment/
+├── docker-compose.yml
+├── http.d/          # optional: maps, zones, real-ip
+│   └── 00-http.conf
+├── conf.d/          # your vhosts
+│   ├── 00-http-redirect.conf
+│   └── 10-mysite.conf
+└── www/             # web root
+```
+
+```yaml
+    volumes:
+      - ./conf.d:/etc/nginx/conf.d:ro
+      - ./http.d:/etc/nginx/http.d:ro     # optional
+      - letsencrypt:/etc/letsencrypt
+      - ./www:/var/www/html:ro
+```
+
+To change a base setting (worker counts, buffers, log format), bind-mount your
+own `/etc/nginx/nginx.conf` — `http.d` is for *adding* config, and nginx rejects
+a repeated `gzip_comp_level` in one context as a duplicate rather than letting
+the later one win.
 
 ## Adding your own site
 

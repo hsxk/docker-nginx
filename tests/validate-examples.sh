@@ -55,9 +55,14 @@ docker run --rm \
 # already exercise.
 echo "==> nginx -t against every non-optional snippet ($IMAGE)"
 
+# http.d/ is mounted too: it is the directory http-context config is supposed
+# to live in now, so it needs to be on the tested path rather than assumed to
+# work. The fixture declares a zone that no vhost file references by name — if
+# the include ever moved after conf.d, a zone used by a vhost would break.
 docker run --rm \
     --add-host php-fpm:127.0.0.1 \
     -v "$ROOT/tests/snippet-coverage.conf:/etc/nginx/conf.d/snippet-coverage.conf:ro" \
+    -v "$ROOT/tests/http.d:/etc/nginx/http.d:ro" \
     --entrypoint /bin/sh \
     "$IMAGE" -ec "${mint_certs}
         nginx -t

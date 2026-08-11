@@ -24,6 +24,13 @@ services:
       # wp.example.com — mounting them as-is will fail `nginx -t` because the
       # certs don't exist. They're templates, not a runnable bundle.
 
+      # http-level config: maps, rate-limit zones, upstreams, real-ip,
+      # zstd/geoip2/vts activation. Loaded before conf.d, so anything declared
+      # here is visible to every vhost no matter how the files are named.
+      # Optional — leave it out and nothing changes.
+      #
+      #   - ./http.d:/etc/nginx/http.d:ro
+
       # TLS certificates. In production point this at certbot's live dir.
       - letsencrypt:/etc/letsencrypt
 
