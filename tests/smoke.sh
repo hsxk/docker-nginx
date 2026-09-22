@@ -167,7 +167,7 @@ for office_path in /office /office/child /office-addin /office-addin/child; do
     office_hdrs=$(fetch_test_headers "$office_path")
     office_xfo_count=$(grep -ci '^X-Frame-Options:' <<<"$office_hdrs" || true)
     check "$office_path has no X-Frame-Options" "$office_xfo_count" "0"
-    if grep -qi "^Content-Security-Policy: .*frame-ancestors .*officeapps\.live\.com" <<<"$office_hdrs"; then
+    if grep -qi "^Content-Security-Policy: .*frame-ancestors .*office-parent\.example" <<<"$office_hdrs"; then
         pass "$office_path keeps CSP frame-ancestors"
     else
         bad "$office_path missing CSP frame-ancestors"
@@ -195,6 +195,14 @@ oauth_coop=$(awk -F': *' 'tolower($1)=="cross-origin-opener-policy"{print $2}' <
 check "popup auth COOP override" "$oauth_coop" "same-origin-allow-popups"
 oauth_xfo_count=$(grep -ci '^X-Frame-Options:' <<<"$oauth_hdrs" || true)
 check "popup auth keeps one X-Frame-Options" "$oauth_xfo_count" "1"
+for h in strict-transport-security x-content-type-options x-frame-options \
+         referrer-policy permissions-policy; do
+    if grep -qi "^$h:" <<<"$oauth_hdrs"; then
+        pass "popup auth keeps $h"
+    else
+        bad "popup auth lost $h"
+    fi
+done
 
 echo "==> quic_bpf capability detection"
 # Under Docker's default capability set the answer must be "off". Getting this
