@@ -61,6 +61,8 @@ nginx_v=$(docker run --rm --entrypoint nginx "$IMAGE" -V 2>&1)
 runtime_version=$(docker run --rm --entrypoint sh "$IMAGE" -c 'printf "%s" "$NGINX_VERSION"')
 binary_version=$(docker run --rm --entrypoint nginx "$IMAGE" -v 2>&1 | sed 's#^nginx version: nginx/##')
 check "runtime nginx -v matches NGINX_VERSION" "$binary_version" "$runtime_version"
+openssl_version=$(docker run --rm --entrypoint openssl "$IMAGE" version | awk '{print $2}')
+check "runtime OpenSSL version" "$openssl_version" "3.5.8"
 
 if docker run --rm --entrypoint nginx "$IMAGE" -t >/dev/null 2>&1; then
     pass "nginx -t"
@@ -79,6 +81,252 @@ for module in \
         bad "dynamic module missing: $module"
     fi
 done
+
+module_count=$(docker run --rm --entrypoint sh "$IMAGE" -c "find /usr/lib/nginx/modules -maxdepth 1 -type f -name '*.so' | wc -l" | tr -d ' ')
+load_count=$(docker run --rm --entrypoint sh "$IMAGE" -c "grep -hEc '^load_module /usr/lib/nginx/modules/.*\.so; --with-http_ssl_module --with-http_v2_module --with-http_v3_module; do
+    case "$nginx_v" in
+        *"$feature"*) pass "nginx -V contains $feature" ;;
+        *) bad "$feature missing from nginx -V" ;;
+    esac
+done
+# The QUIC API nginx compiles against is chosen from the OpenSSL headers:
+# below 3.5.1 it silently downgrades to the slower compat shim.
+case "$nginx_v" in
+    *"OpenSSL 3.5"*|*"OpenSSL 3.6"*|*"OpenSSL 4"*) pass "TLS: $(echo "$nginx_v" | grep -o 'built with OpenSSL[^ ]* [0-9.]*' | head -1)" ;;
+    *) bad "expected OpenSSL >= 3.5 for the native QUIC server API: $(echo "$nginx_v" | grep -i 'built with' || true)" ;;
+esac
+
+echo "==> listeners and protocol config"
+runtime_config=$(docker exec "$NAME" nginx -T 2>&1)
+for expected in "http2       on;" "listen      443 quic" "ssl_protocols              TLSv1.2 TLSv1.3;" "brotli            on;"; do
+    if grep -Fq "$expected" <<<"$runtime_config"; then
+        pass "nginx -T contains: $expected"
+    else
+        bad "nginx -T missing: $expected"
+    fi
+done
+
+if docker exec "$NAME" netstat -lun 2>/dev/null | grep -q ':443'; then
+    pass "QUIC/UDP :443 bound"
+else
+    bad "no UDP listener on :443 — HTTP/3 would be advertised but dead"
+fi
+
+for tls_flag in -tls1_2 -tls1_3; do
+    if docker exec "$NAME" sh -c "printf '\n' | timeout 5 openssl s_client $tls_flag -connect 127.0.0.1:443 -servername localhost >/dev/null 2>&1"; then
+        pass "TLS handshake succeeds with $tls_flag"
+    else
+        bad "TLS handshake failed with $tls_flag"
+    fi
+done
+
+openssl_sclient_help=$(docker exec "$NAME" openssl s_client -help 2>&1 || true)
+if grep -q -- '-quic' <<<"$openssl_sclient_help"; then
+    quic_handshake=$(docker exec "$NAME" sh -c "printf '\n' | timeout 5 openssl s_client -quic -connect 127.0.0.1:443 -servername localhost -alpn h3 2>&1 || true")
+    if grep -q 'ALPN protocol: h3' <<<"$quic_handshake"; then
+        pass "HTTP/3 QUIC handshake negotiates h3 via ALPN"
+    else
+        bad "QUIC listener did not negotiate h3 via ALPN"
+    fi
+else
+    bad "OpenSSL 3.5 s_client lacks -quic support"
+fi
+
+echo "==> plain HTTP"
+code=$(curl -sS -o /dev/null -w '%{http_code}' "http://127.0.0.1:${HTTP_PORT}/healthz")
+check "GET /healthz" "$code" "200"
+
+code=$(curl -sS -o /dev/null -w '%{http_code}' "http://127.0.0.1:${HTTP_PORT}/")
+check "GET / redirects to TLS" "$code" "301"
+
+http_hdrs=$(curl -sSI "http://127.0.0.1:${HTTP_PORT}/")
+if grep -qi '^strict-transport-security:' <<<"$http_hdrs"; then
+    bad "HSTS sent over plaintext (the \$https map is not working)"
+else
+    pass "no HSTS over plaintext"
+fi
+
+echo "==> HTTPS"
+code=$(curl -sSk -o /dev/null -w '%{http_code}' "https://127.0.0.1:${TLS_PORT}/")
+check "GET / over TLS" "$code" "200"
+
+if curl -sSk --http2 -o /dev/null -w '%{http_version}' "https://127.0.0.1:${TLS_PORT}/" | grep -q '^2'; then
+    pass "HTTP/2 negotiated"
+else
+    bad "HTTP/2 not negotiated"
+fi
+
+# The regression that motivated this file: every snippet that carries an
+# add_header of its own (http3.conf's Alt-Svc here) used to wipe the whole
+# inherited security-header set for the vhost.
+tls_hdrs=$(curl -sSkI "https://127.0.0.1:${TLS_PORT}/")
+for h in strict-transport-security x-content-type-options x-frame-options \
+         referrer-policy permissions-policy cross-origin-opener-policy alt-svc; do
+    if grep -qi "^${h}:" <<<"$tls_hdrs"; then
+        pass "header $h present alongside Alt-Svc"
+    else
+        bad "header $h missing"
+    fi
+done
+
+# Content-Type must appear exactly once (add_header would have duplicated it).
+ct=$(grep -ci '^content-type:' <<<"$(curl -sSI "http://127.0.0.1:${HTTP_PORT}/healthz")" || true)
+check "healthz has a single Content-Type" "$ct" "1"
+
+echo "==> security-header overrides"
+docker cp "$ROOT/tests/header-overrides.conf" "$NAME:/etc/nginx/conf.d/90-header-overrides-test.conf" >/dev/null
+if docker exec "$NAME" nginx -t >/dev/null 2>&1 && docker exec "$NAME" nginx -s reload >/dev/null 2>&1; then
+    pass "header override fixture loads and nginx -t passes"
+else
+    bad "header override fixture failed nginx -t/reload"
+fi
+sleep 1
+
+fetch_test_headers() {
+    path="$1"
+    extra_header="${2:-}"
+    # Keep request construction on the host so arbitrary header values are not
+    # interpolated into a container shell command.
+    {
+        printf 'GET %s HTTP/1.1\r\nHost: header-overrides.test\r\n' "$path"
+        [ -n "$extra_header" ] && printf '%s\r\n' "$extra_header"
+        printf 'Connection: close\r\n\r\n'
+    } | {
+        # OpenSSL 3 may return non-zero on a clean peer EOF even after emitting
+        # the complete HTTP response. Preserve those response bytes.
+        docker exec -i "$NAME" openssl s_client -quiet -ign_eof \
+          -connect 127.0.0.1:8444 -servername header-overrides.test 2>/dev/null || true
+    } | tr -d '\r' | sed -n '1,/^$/p'
+}
+
+normal_hdrs=$(fetch_test_headers /normal)
+normal_xfo_count=$(grep -ci '^X-Frame-Options:' <<<"$normal_hdrs" || true)
+check "normal path has exactly one X-Frame-Options" "$normal_xfo_count" "1"
+normal_xfo=$(awk -F': *' 'tolower($1)=="x-frame-options"{print $2}' <<<"$normal_hdrs")
+check "normal path X-Frame-Options value" "$normal_xfo" "SAMEORIGIN"
+
+for office_path in /office /office/child /office-addin /office-addin/child; do
+    office_hdrs=$(fetch_test_headers "$office_path")
+    office_xfo_count=$(grep -ci '^X-Frame-Options:' <<<"$office_hdrs" || true)
+    check "$office_path has no X-Frame-Options" "$office_xfo_count" "0"
+    if grep -qi "^Content-Security-Policy: .*frame-ancestors .*office-parent\.example" <<<"$office_hdrs"; then
+        pass "$office_path keeps CSP frame-ancestors"
+    else
+        bad "$office_path missing CSP frame-ancestors"
+    fi
+    for h in strict-transport-security x-content-type-options referrer-policy \
+             permissions-policy cross-origin-opener-policy; do
+        if grep -qi "^$h:" <<<"$office_hdrs"; then
+            pass "$office_path keeps $h"
+        else
+            bad "$office_path lost $h"
+        fi
+    done
+done
+
+custom_hdrs=$(fetch_test_headers /custom)
+custom_xfo_count=$(grep -ci '^X-Frame-Options:' <<<"$custom_hdrs" || true)
+check "custom override has one X-Frame-Options" "$custom_xfo_count" "1"
+custom_xfo=$(awk -F': *' 'tolower($1)=="x-frame-options"{print $2}' <<<"$custom_hdrs")
+check "custom override replaces value" "$custom_xfo" "DENY"
+
+oauth_hdrs=$(fetch_test_headers /oauth-popup)
+oauth_coop_count=$(grep -ci '^Cross-Origin-Opener-Policy:' <<<"$oauth_hdrs" || true)
+check "popup auth has one COOP header" "$oauth_coop_count" "1"
+oauth_coop=$(awk -F': *' 'tolower($1)=="cross-origin-opener-policy"{print $2}' <<<"$oauth_hdrs")
+check "popup auth COOP override" "$oauth_coop" "same-origin-allow-popups"
+oauth_xfo_count=$(grep -ci '^X-Frame-Options:' <<<"$oauth_hdrs" || true)
+check "popup auth keeps one X-Frame-Options" "$oauth_xfo_count" "1"
+for h in strict-transport-security x-content-type-options x-frame-options \
+         referrer-policy permissions-policy; do
+    if grep -qi "^$h:" <<<"$oauth_hdrs"; then
+        pass "popup auth keeps $h"
+    else
+        bad "popup auth lost $h"
+    fi
+done
+
+brotli_hdrs=$(fetch_test_headers /brotli "Accept-Encoding: br")
+if grep -qi '^Content-Encoding: br
+# Under Docker's default capability set the answer must be "off". Getting this
+# wrong is not a subtle bug: nginx refuses to start when quic_bpf is set
+# without CAP_BPF/CAP_NET_ADMIN, so a false positive here bricks every
+# container that does not opt in. (The container being healthy above already
+# proves nginx started, which is half the assertion.)
+bpf=$(docker exec "$NAME" cat /etc/nginx/quic-bpf.conf)
+if grep -q '^quic_bpf on;' <<<"$bpf"; then
+    bad "quic_bpf enabled without the capabilities for it"
+else
+    pass "quic_bpf correctly off under default capabilities"
+fi
+
+echo "==> no startup warnings"
+# ssl_stapling used to emit one of these per certificate on every boot.
+if docker logs "$NAME" 2>&1 | grep -qi '\[warn\]'; then
+    bad "startup emits warnings: $(docker logs "$NAME" 2>&1 | grep -i '\[warn\]' | head -1)"
+else
+    pass "clean startup, no warnings"
+fi
+
+echo "==> resolver"
+resolver=$(docker exec "$NAME" cat /etc/nginx/resolver.conf)
+if grep -q '^resolver .*127\.0\.0\.11' <<<"$resolver"; then
+    pass "resolver picked up Docker embedded DNS"
+else
+    bad "resolver not generated from /etc/resolv.conf: $resolver"
+fi
+
+echo
+if [ "$fail" -eq 0 ]; then
+    echo "all smoke checks passed"
+else
+    echo "smoke checks FAILED"
+fi
+exit "$fail"
+ <<<"$brotli_hdrs"; then
+    pass "Brotli filter compresses eligible response"
+else
+    bad "Brotli response missing Content-Encoding: br"
+fi
+
+echo "==> quic_bpf capability detection"
+# Under Docker's default capability set the answer must be "off". Getting this
+# wrong is not a subtle bug: nginx refuses to start when quic_bpf is set
+# without CAP_BPF/CAP_NET_ADMIN, so a false positive here bricks every
+# container that does not opt in. (The container being healthy above already
+# proves nginx started, which is half the assertion.)
+bpf=$(docker exec "$NAME" cat /etc/nginx/quic-bpf.conf)
+if grep -q '^quic_bpf on;' <<<"$bpf"; then
+    bad "quic_bpf enabled without the capabilities for it"
+else
+    pass "quic_bpf correctly off under default capabilities"
+fi
+
+echo "==> no startup warnings"
+# ssl_stapling used to emit one of these per certificate on every boot.
+if docker logs "$NAME" 2>&1 | grep -qi '\[warn\]'; then
+    bad "startup emits warnings: $(docker logs "$NAME" 2>&1 | grep -i '\[warn\]' | head -1)"
+else
+    pass "clean startup, no warnings"
+fi
+
+echo "==> resolver"
+resolver=$(docker exec "$NAME" cat /etc/nginx/resolver.conf)
+if grep -q '^resolver .*127\.0\.0\.11' <<<"$resolver"; then
+    pass "resolver picked up Docker embedded DNS"
+else
+    bad "resolver not generated from /etc/resolv.conf: $resolver"
+fi
+
+echo
+if [ "$fail" -eq 0 ]; then
+    echo "all smoke checks passed"
+else
+    echo "smoke checks FAILED"
+fi
+exit "$fail"
+ /etc/nginx/modules-enabled/*.conf" | tr -d ' ')
+check "every dynamic module has a load_module entry" "$load_count" "$module_count"
 
 for feature in --with-http_ssl_module --with-http_v2_module --with-http_v3_module; do
     case "$nginx_v" in
