@@ -63,8 +63,13 @@ nginx_v=$(docker run --rm --entrypoint nginx "$IMAGE" -V 2>&1)
 printf '%s\n' "$nginx_v"
 
 runtime_version=$(docker run --rm --entrypoint sh "$IMAGE" -c 'printf "%s" "$NGINX_VERSION"')
-binary_version=$(docker run --rm --entrypoint nginx "$IMAGE" -v 2>&1 | sed 's#^nginx version: nginx/##')
+binary_version_line=$(docker run --rm --entrypoint nginx "$IMAGE" -v 2>&1)
+binary_version=$(printf '%s\n' "$binary_version_line" | sed 's#^nginx version: nginx/##; s/ .*//')
 check "runtime nginx -v matches NGINX_VERSION" "$binary_version" "$runtime_version"
+case "$binary_version_line" in
+    *" (docker-nginx-quic)"*) pass "custom nginx build marker present" ;;
+    *) bad "custom nginx build marker missing" ;;
+esac
 
 openssl_version=$(docker run --rm --entrypoint openssl "$IMAGE" version | awk '{print $2}')
 check "runtime OpenSSL version" "$openssl_version" "3.5.8"
@@ -93,7 +98,8 @@ load_count=$(docker run --rm --entrypoint sh "$IMAGE" -c \
     "grep -h '^load_module /usr/lib/nginx/modules/.*\.so;$' /etc/nginx/modules-enabled/*.conf | wc -l" | tr -d '[:space:]')
 check "every dynamic module has one load_module entry" "$load_count" "$module_count"
 
-for feature in --with-http_ssl_module --with-http_v2_module --with-http_v3_module; do
+for feature in --with-control-api --with-http_json_module \
+               --with-http_ssl_module --with-http_v2_module --with-http_v3_module; do
     case "$nginx_v" in
         *"$feature"*) pass "nginx -V contains $feature" ;;
         *) bad "$feature missing from nginx -V" ;;
