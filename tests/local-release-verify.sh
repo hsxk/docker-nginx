@@ -118,18 +118,60 @@ fi
 rm -f "$source_tar"
 printf 'ok: nginx source SHA256 matches %s\n' "$NGINX_SHA256"
 
-printf '\n===== SECURITY HEADER CONFIG LINT =====\n'
-managed_headers='Strict-Transport-Security|X-Content-Type-Options|X-Frame-Options|Referrer-Policy|Permissions-Policy|Cross-Origin-Opener-Policy'
-bad_header_lines=$(find "$ROOT/mainline/alpine/files" "$ROOT/examples" "$ROOT/tests" \
-    -type f -name '*.conf' -print0 \
-    | xargs -0 grep -nEi "^[[:space:]]*add_header[[:space:]]+($managed_headers)([[:space:];]|$)" \
-    || true)
-if [ -n "$bad_header_lines" ]; then
-    echo "error: managed security headers must use headers-more, not add_header:" >&2
-    printf '%s\n' "$bad_header_lines" >&2
+printf '\n===== NEUTRAL HEADER CONFIG LINT =====\n'
+managed_headers='Content-Security-Policy|Cross-Origin-Opener-Policy|Cross-Origin-Resource-Policy|Cross-Origin-Embedder-Policy|X-Frame-Options|Permissions-Policy|Referrer-Policy|Strict-Transport-Security|X-Content-Type-Options'
+
+# Automatically loaded base files must neither include the optional security
+# policy snippet nor emit any managed application/browser security header.
+auto_files=(
+    "$ROOT/mainline/alpine/files/nginx.conf"
+    "$ROOT/mainline/alpine/docker-entrypoint.sh"
+)
+while IFS= read -r file; do
+    auto_files+=("$file")
+done < <(find "$ROOT/mainline/alpine/files/default-conf.d" -type f -name '*.conf' -print | sort)
+
+auto_include_hits=$(grep -nH -F 'include /etc/nginx/snippets/security-headers.conf;' "${auto_files[@]}" || true)
+if [ -n "$auto_include_hits" ]; then
+    echo "error: base image still auto-loads security-headers.conf:" >&2
+    printf '%s\n' "$auto_include_hits" >&2
     exit 1
 fi
-echo "ok: no managed security header uses add_header in shipped configs"
+
+auto_policy_hits=$(grep -nHEi "^[[:space:]]*(add_header|more_set_headers|more_clear_headers)[[:space:]]+.*($managed_headers)" "${auto_files[@]}" || true)
+if [ -n "$auto_policy_hits" ]; then
+    echo "error: automatically loaded base config emits application policy headers:" >&2
+    printf '%s\n' "$auto_policy_hits" >&2
+    exit 1
+fi
+
+# No other shipped snippet may silently reintroduce these policies. The single
+# exception is security-headers.conf itself, which is an explicit opt-in sample.
+other_snippets=()
+while IFS= read -r file; do
+    other_snippets+=("$file")
+done < <(find "$ROOT/mainline/alpine/files/snippets" -type f -name '*.conf' ! -name 'security-headers.conf' -print | sort)
+
+snippet_include_hits=$(grep -nH -F 'security-headers.conf' "${other_snippets[@]}" || true)
+if [ -n "$snippet_include_hits" ]; then
+    echo "error: another snippet references the opt-in security policy:" >&2
+    printf '%s\n' "$snippet_include_hits" >&2
+    exit 1
+fi
+
+snippet_policy_hits=$(grep -nHEi "^[[:space:]]*(add_header|more_set_headers|more_clear_headers)[[:space:]]+.*($managed_headers)" "${other_snippets[@]}" || true)
+if [ -n "$snippet_policy_hits" ]; then
+    echo "error: non-policy snippet emits an application security header:" >&2
+    printf '%s\n' "$snippet_policy_hits" >&2
+    exit 1
+fi
+
+# The opt-in example must loudly say that it is not part of the base policy.
+grep -Fq 'OPT-IN ONLY' "$ROOT/mainline/alpine/files/snippets/security-headers.conf"
+grep -Fq 'base image does NOT include this file automatically' \
+    "$ROOT/mainline/alpine/files/snippets/security-headers.conf"
+
+echo "ok: base include graph is neutral; security-headers.conf is opt-in only"
 
 build_and_verify() {
     flavor="$1"
