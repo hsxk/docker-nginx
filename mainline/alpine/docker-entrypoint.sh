@@ -167,7 +167,29 @@ gen_resolver
 gen_quic_bpf
 ensure_default_cert
 
-# 4. If the user passed `nginx ...`, validate config first.
+# 4. The runtime base owns an nginx apk package, but this image deliberately
+# replaces /usr/sbin/nginx with a source-built binary that exactly matches the
+# third-party dynamic modules above. If a downstream layer runs
+# `apk upgrade nginx` / `apk fix nginx`, apk can restore its package-owned
+# binary and silently break that ABI/config contract. Detect that replacement
+# before attempting to serve traffic and explain the fix.
+verify_nginx_binary() {
+    version_line=$(nginx -v 2>&1 || true)
+    case "$version_line" in
+        *"nginx/${NGINX_VERSION:-}"*" (docker-nginx-quic)"*)
+            ;;
+        *)
+            echo "[entrypoint] ERROR: unexpected nginx binary: $version_line" >&2
+            echo "[entrypoint] expected nginx/${NGINX_VERSION:-unknown} (docker-nginx-quic)." >&2
+            echo "[entrypoint] Do not apk upgrade/fix the nginx package in a downstream image; bump this image's pinned base/source versions and rebuild instead." >&2
+            exit 1
+            ;;
+    esac
+}
+
+verify_nginx_binary
+
+# 5. If the user passed `nginx ...`, validate config first.
 case "${1:-}" in
     nginx|/usr/sbin/nginx)
         echo "[entrypoint] running 'nginx -t'…"
