@@ -191,6 +191,28 @@ build_and_verify() {
     docker image inspect "$image" \
         >"$ARTIFACT_DIR/image-inspect-$flavor.json"
 
+    printf '\n===== CUSTOM BINARY GUARD %s =====\n' "$flavor"
+    guard_log="$ARTIFACT_DIR/binary-guard-$flavor.log"
+    if docker run --rm --entrypoint sh "$image" -ec '
+        cat > /usr/sbin/nginx <<'"'"'EOF'"'"'
+#!/bin/sh
+echo "nginx version: nginx/${NGINX_VERSION}" >&2
+exit 0
+EOF
+        chmod +x /usr/sbin/nginx
+        exec /usr/local/bin/docker-entrypoint.sh true
+    ' >"$guard_log" 2>&1; then
+        cat "$guard_log"
+        echo "error: entrypoint accepted a replaced nginx binary" >&2
+        exit 1
+    fi
+    cat "$guard_log"
+    if ! grep -q 'unexpected nginx binary' "$guard_log"; then
+        echo "error: binary guard failed for an unexpected reason" >&2
+        exit 1
+    fi
+    echo "ok: entrypoint rejects a package/downstream-replaced nginx binary"
+
     printf '\n===== SMOKE %s =====\n' "$flavor"
     "$ROOT/tests/smoke.sh" "$image" \
         2>&1 | tee "$ARTIFACT_DIR/smoke-$flavor.log"
