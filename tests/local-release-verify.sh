@@ -35,6 +35,7 @@ need awk
 need sed
 need grep
 need tee
+need sha256sum
 
 # Fail before spending build time if a tracked test script is syntactically
 # broken. This caught a real regression while preparing the 1.31.6 upgrade.
@@ -71,6 +72,31 @@ EOF
 
 printf 'Local verification artifacts: %s\n' "$ARTIFACT_DIR"
 printf 'NGINX_VERSION=%s\n' "$NGINX_VERSION"
+
+printf '\n===== UPSTREAM PIN CHECK =====\n'
+if ! docker buildx version >/dev/null 2>&1; then
+    echo "error: docker buildx is required to verify the official image digest" >&2
+    exit 1
+fi
+
+upstream_inspect=$(docker buildx imagetools inspect "$NGINX_FROM_IMAGE")
+printf '%s\n' "$upstream_inspect" >"$ARTIFACT_DIR/upstream-image-inspect.txt"
+remote_digest=$(printf '%s\n' "$upstream_inspect" | awk '$1 == "Digest:" {print $2; exit}')
+
+if [ -z "$remote_digest" ]; then
+    echo "error: could not determine current digest for $NGINX_FROM_IMAGE" >&2
+    exit 1
+fi
+
+if [ "$remote_digest" != "$NGINX_FROM_DIGEST" ]; then
+    echo "error: official tag moved since the Dockerfile was pinned" >&2
+    echo "  tag:      $NGINX_FROM_IMAGE" >&2
+    echo "  pinned:   $NGINX_FROM_DIGEST" >&2
+    echo "  current:  $remote_digest" >&2
+    echo "Re-audit the new official image, update the immutable digest deliberately, then rerun." >&2
+    exit 1
+fi
+printf 'ok: official tag still resolves to %s\n' "$NGINX_FROM_DIGEST"
 
 build_and_verify() {
     flavor="$1"
