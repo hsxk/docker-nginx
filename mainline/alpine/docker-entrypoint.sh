@@ -8,8 +8,9 @@
 #   3. If no certificate exists at /etc/letsencrypt/_default/, drop in a
 #      throw-away self-signed pair so nginx can boot for local testing.
 #      In production, mount your real certs into /etc/letsencrypt/.
-#   4. Validate config with `nginx -t`.
-#   5. Exec the requested command (default: nginx -g 'daemon off;').
+#   4. Verify the custom nginx binary has not been replaced by apk/downstream.
+#   5. Validate config with `nginx -t`.
+#   6. Exec the requested command (default: nginx -g 'daemon off;').
 #
 # Periodic reload (for cert renewal) is the host's job — run e.g.:
 #     docker exec nginx nginx -s reload
@@ -174,17 +175,20 @@ ensure_default_cert
 # binary and silently break that ABI/config contract. Detect that replacement
 # before attempting to serve traffic and explain the fix.
 verify_nginx_binary() {
+    if [ -z "${NGINX_VERSION:-}" ]; then
+        echo "[entrypoint] ERROR: NGINX_VERSION is missing from the runtime image." >&2
+        exit 1
+    fi
+
     version_line=$(nginx -v 2>&1 || true)
-    case "$version_line" in
-        *"nginx/${NGINX_VERSION:-}"*" (docker-nginx-quic)"*)
-            ;;
-        *)
-            echo "[entrypoint] ERROR: unexpected nginx binary: $version_line" >&2
-            echo "[entrypoint] expected nginx/${NGINX_VERSION:-unknown} (docker-nginx-quic)." >&2
-            echo "[entrypoint] Do not apk upgrade/fix the nginx package in a downstream image; bump this image's pinned base/source versions and rebuild instead." >&2
-            exit 1
-            ;;
-    esac
+    expected="nginx version: nginx/${NGINX_VERSION} (docker-nginx-quic)"
+
+    if [ "$version_line" != "$expected" ]; then
+        echo "[entrypoint] ERROR: unexpected nginx binary: $version_line" >&2
+        echo "[entrypoint] expected: $expected" >&2
+        echo "[entrypoint] Do not apk upgrade/fix the nginx package in a downstream image; bump this image's pinned base/source versions and rebuild instead." >&2
+        exit 1
+    fi
 }
 
 verify_nginx_binary
