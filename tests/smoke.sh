@@ -215,19 +215,32 @@ else
 fi
 sleep 1
 
-fetch_test_headers() {
-    path="$1"
-    extra_header="${2:-}"
+fetch_host_headers() {
+    host="$1"
+    path="$2"
+    extra_header="${3:-}"
     args=(
         --noproxy '*'
         -sSkD -
         -o /dev/null
-        --resolve "header-overrides.test:${HEADER_PORT}:127.0.0.1"
+        --resolve "${host}:${HEADER_PORT}:127.0.0.1"
     )
     if [ -n "$extra_header" ]; then
         args+=(-H "$extra_header")
     fi
-    curl "${args[@]}" "https://header-overrides.test:${HEADER_PORT}${path}"
+    curl "${args[@]}" "https://${host}:${HEADER_PORT}${path}"
+}
+
+fetch_test_headers() {
+    fetch_host_headers header-overrides.test "$1" "${2:-}"
+}
+
+check_one_header() {
+    label="$1"
+    header="$2"
+    headers="$3"
+    count=$(grep -ci "^${header}:" <<<"$headers" || true)
+    check "$label" "$count" "1"
 }
 
 normal_hdrs=$(fetch_test_headers /normal)
@@ -235,6 +248,10 @@ normal_xfo_count=$(grep -ci '^x-frame-options:' <<<"$normal_hdrs" || true)
 check "normal path has exactly one X-Frame-Options" "$normal_xfo_count" "1"
 normal_xfo=$(awk -F': *' 'tolower($1)=="x-frame-options"{gsub("\r","",$2); print $2}' <<<"$normal_hdrs")
 check "normal path X-Frame-Options value" "$normal_xfo" "SAMEORIGIN"
+for h in strict-transport-security x-content-type-options referrer-policy \
+         permissions-policy cross-origin-opener-policy; do
+    check_one_header "normal path has exactly one $h" "$h" "$normal_hdrs"
+done
 
 for office_path in /office /office/child /office-addin /office-addin/child; do
     office_hdrs=$(fetch_test_headers "$office_path")
@@ -249,11 +266,7 @@ for office_path in /office /office/child /office-addin /office-addin/child; do
 
     for h in strict-transport-security x-content-type-options referrer-policy \
              permissions-policy cross-origin-opener-policy; do
-        if grep -qi "^${h}:" <<<"$office_hdrs"; then
-            pass "$office_path keeps $h"
-        else
-            bad "$office_path lost $h"
-        fi
+        check_one_header "$office_path keeps exactly one $h" "$h" "$office_hdrs"
     done
 done
 
@@ -271,11 +284,17 @@ check "popup auth COOP override" "$oauth_coop" "same-origin-allow-popups"
 
 for h in strict-transport-security x-content-type-options x-frame-options \
          referrer-policy permissions-policy; do
-    if grep -qi "^${h}:" <<<"$oauth_hdrs"; then
-        pass "popup auth keeps $h"
-    else
-        bad "popup auth lost $h"
-    fi
+    check_one_header "popup auth keeps exactly one $h" "$h" "$oauth_hdrs"
+done
+
+popup_server_hdrs=$(fetch_host_headers popup-server.test /)
+popup_server_coop_count=$(grep -ci '^cross-origin-opener-policy:' <<<"$popup_server_hdrs" || true)
+check "server-scope popup auth has one COOP header" "$popup_server_coop_count" "1"
+popup_server_coop=$(awk -F': *' 'tolower($1)=="cross-origin-opener-policy"{gsub("\r","",$2); print $2}' <<<"$popup_server_hdrs")
+check "server-scope popup auth COOP override" "$popup_server_coop" "same-origin-allow-popups"
+for h in strict-transport-security x-content-type-options x-frame-options \
+         referrer-policy permissions-policy; do
+    check_one_header "server-scope popup auth keeps exactly one $h" "$h" "$popup_server_hdrs"
 done
 
 brotli_hdrs=$(fetch_test_headers /brotli "Accept-Encoding: br")
