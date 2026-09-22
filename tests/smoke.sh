@@ -275,6 +275,8 @@ for office_path in /office /office/child /office-addin /office-addin/child; do
     else
         bad "$office_path missing CSP frame-ancestors"
     fi
+    check_one_header "$office_path has exactly one Content-Security-Policy" \
+        "content-security-policy" "$office_hdrs"
 
     for h in strict-transport-security x-content-type-options referrer-policy \
              permissions-policy cross-origin-opener-policy; do
@@ -287,6 +289,10 @@ custom_xfo_count=$(grep -ci '^x-frame-options:' <<<"$custom_hdrs" || true)
 check "custom override has one X-Frame-Options" "$custom_xfo_count" "1"
 custom_xfo=$(awk -F': *' 'tolower($1)=="x-frame-options"{gsub("\r","",$2); print $2}' <<<"$custom_hdrs")
 check "custom override replaces value" "$custom_xfo" "DENY"
+for h in strict-transport-security x-content-type-options referrer-policy \
+         permissions-policy cross-origin-opener-policy; do
+    check_one_header "custom XFO override keeps exactly one $h" "$h" "$custom_hdrs"
+done
 
 oauth_hdrs=$(fetch_test_headers /oauth-popup)
 oauth_coop_count=$(grep -ci '^cross-origin-opener-policy:' <<<"$oauth_hdrs" || true)
