@@ -14,7 +14,7 @@ set -euo pipefail
 
 IMAGE="${1:?usage: smoke.sh <image>}"
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-NAME="nginx-smoke-$"
+NAME="nginx-smoke-$$"
 NET="nginx-smoke-net-$$"
 HTTP_PORT="${HTTP_PORT:-18080}"
 TLS_PORT="${TLS_PORT:-18443}"
