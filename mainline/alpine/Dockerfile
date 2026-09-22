@@ -237,8 +237,6 @@ RUN set -eux; \
       --user=nginx --group=nginx \
       --build=docker-nginx-quic \
       --with-threads --with-file-aio --with-compat --with-pcre-jit \
-      --with-control-api \
-      --with-http_json_module \
       --with-http_ssl_module \
       --with-http_v2_module \
       --with-http_v3_module \
