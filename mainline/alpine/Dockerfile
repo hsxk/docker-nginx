@@ -230,7 +230,10 @@ RUN set -eux; \
       --http-uwsgi-temp-path=/var/cache/nginx/uwsgi_temp \
       --http-scgi-temp-path=/var/cache/nginx/scgi_temp \
       --user=nginx --group=nginx \
+      --build=docker-nginx-quic \
       --with-threads --with-file-aio --with-compat --with-pcre-jit \
+      --with-control-api \
+      --with-http_json_module \
       --with-http_ssl_module \
       --with-http_v2_module \
       --with-http_v3_module \
