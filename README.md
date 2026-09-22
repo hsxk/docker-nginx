@@ -3,9 +3,17 @@
 A small, hardened NGINX Docker image with HTTP/3 (QUIC), Brotli, headers-more,
 and FastCGI cache-purge. HTTP/3 runs on **stock OpenSSL 3.5**, linked
 dynamically against the distro package — no vendored TLS fork. Shipped as a
-*toolbox*: the image gives you a sensible base config plus a library of
-include-able snippets — you bring your own sites in `/etc/nginx/conf.d/` and
-any http-level config in `/etc/nginx/http.d/`.
+*toolbox*: the image gives you a sensible transport/runtime base plus a library
+of include-able snippets — you bring your own sites in `/etc/nginx/conf.d/`
+and any http-level config in `/etc/nginx/http.d/`.
+
+**The base image is intentionally neutral about application/browser security
+policy.** A bare container does not emit CSP, COOP, CORP, COEP,
+X-Frame-Options, Permissions-Policy, Referrer-Policy, HSTS, or
+X-Content-Type-Options. Those headers belong to each application because the
+correct policy depends on its framing, OAuth, popup, asset-sharing and
+cross-origin requirements. `headers-more` is available when a site needs
+replacement/clearing semantics, but it is not used to invent a global policy.
 
 ## What's in the image
 
@@ -88,97 +96,35 @@ Modules removed vs. the previous image:
 * `--with-http_geoip_module` — MaxMind has EOL'd the GeoIP1 DB format. Use the
   optional `ENABLE_GEOIP2` (see below) for the modern GeoIP2 / libmaxminddb path.
 
-## Upgrading from 1.31.1 or earlier
+## Upgrading from earlier images
 
-Most of this release is bug fixes, but some defaults changed in ways that can
-change what your sites serve. In rough order of "will bite you".
+The NGINX 1.31.6 image changes one important ownership boundary: **application
+security headers are no longer injected by the base image.**
 
-**Override security headers with `more_set_headers`, not `add_header`.** They
-moved out of `add_header` (see [Behaviour worth knowing about](#behaviour-worth-knowing-about)
-for why). The families do not see each other, so a vhost doing
-`add_header X-Frame-Options "DENY" always;` no longer replaces the default —
-the response now carries both `SAMEORIGIN` and `DENY`, which browsers treat as
-conflicting and may ignore outright. Grep your configs for `add_header` naming
-any of: `Strict-Transport-Security`, `X-Content-Type-Options`, `X-Frame-Options`,
-`Referrer-Policy`, `Permissions-Policy`, `Cross-Origin-Opener-Policy` — and
-switch those lines to `more_set_headers "Name: value";`.
+Earlier revisions automatically included
+`/etc/nginx/snippets/security-headers.conf` from the global `http {}` block.
+That could collide with an upstream application's headers or with a site's own
+`add_header`, producing duplicate values and breaking legitimate cross-origin
+behaviour such as Microsoft Office Add-in framing or popup communication.
 
-If the old deployment intentionally removed framing protection on selected
-routes, migrate those exceptions explicitly:
+When upgrading:
 
-```nginx
-location ~ ^/(?:office|office-addin)(?:/|$) {
-    include /etc/nginx/snippets/security-headers-allow-framing.conf;
-    # Example only: replace with the actual parent origins that host your
-    # Office Add-in. Do not bake a generic Microsoft-domain allow-list into
-    # the base image.
-    more_set_headers "Content-Security-Policy: frame-ancestors 'self' https://office-parent.example";
-}
-```
+1. Audit each site and move the security policy it actually needs into that
+   site's own `server {}` / `location {}` configuration.
+2. Do not assume the base image supplies HSTS, nosniff, XFO, COOP, CSP, or any
+   other browser policy.
+3. Remove workarounds that existed only to fight the old global policy.
+4. If an upstream already owns a header, normally pass it through unchanged.
+   Use `more_set_headers` when you intentionally want to replace its value and
+   `more_clear_headers` when the application explicitly wants it removed.
+5. `security-headers.conf` still ships as an **opt-in example only**. It is not
+   loaded by `nginx.conf`, the entrypoint, the fallback vhost, or any other
+   shipped snippet.
 
-Office parent origins vary by host and deployment (Excel/Outlook/SharePoint,
-web vs. desktop), so determine the real ancestor origins for the add-in you
-ship and allow only those. The base image intentionally does **not** guess them.
-
-If that site already emits a Content-Security-Policy, do not add a second CSP
-header just for Office. Merge `frame-ancestors` into the site's existing
-complete policy. Keeping one authoritative CSP makes review and debugging much
-easier and avoids depending on subtle interactions between multiple policies.
-
-For popup-based identity flows that need `window.opener` communication:
-
-```nginx
-# Narrow route when every popup is launched from this page:
-location = /login {
-    include /etc/nginx/snippets/security-headers-popup-auth.conf;
-}
-
-# Or at server scope when login can be started from many pages, which is common
-# for blogs / WordPress / account widgets:
-# server {
-#     include /etc/nginx/snippets/security-headers-popup-auth.conf;
-#     ...
-# }
-```
-
-Do not keep an old `add_header X-Frame-Options ...` beside these snippets:
-remove it first, otherwise the old header family can still append a second XFO.
-
-The popup-auth snippet changes **only COOP**. It does not invent a global CSP or
-Google allow-list. If a site's own CSP blocks Google Identity resources or
-connections, change that site's CSP where it is owned. Likewise this base image
-does not globally set COEP or Cross-Origin-Resource-Policy: those policies are
-application-specific and can break OAuth, embedded widgets, fonts, images or
-other deliberate cross-origin integrations when imposed on every vhost.
-
-**HSTS lost `includeSubDomains`.** If you were relying on it, set it explicitly
-per site. Browsers that already cached the old directive keep honouring it until
-its max-age expires.
-
-**OCSP stapling is off.** Re-enable in `snippets/tls.conf` if your CA publishes
-OCSP responder URLs (Let's Encrypt no longer does).
-
-**TLS session tickets are on.** If you deliberately disabled resumption for
-forward-secrecy reasons, set `ssl_session_tickets off;` again — but read the
-note in `snippets/tls.conf` first, because on TLS 1.3 that disables resumption
-entirely rather than hardening it.
-
-**The FastCGI micro-cache no longer stores responses carrying `Set-Cookie`.**
-Expect a lower hit rate on apps that set cookies on otherwise-cacheable pages;
-this is deliberate, since the old behaviour could replay one visitor's cookie to
-everyone. See `snippets/fastcgi-cache.conf` to opt back in knowingly.
-
-**`ENABLE_NJS=1` no longer builds njs's `xml` module.** Add `ENABLE_NJS_XML=1`
-if your njs scripts parse XML. njs itself also jumped 0.8.7 → 1.0.1; check your
-scripts against its changelog.
-
-**`resolver` is derived from the container's DNS** instead of hardcoded public
-servers. If you depended on nginx resolving via 1.1.1.1 specifically, mount your
-own `/etc/nginx/resolver.conf`.
-
-**No more `VOLUME` declarations.** They created anonymous volumes on every
-`docker run` — one of which shadowed the `/dev/stdout` log symlinks. Mount
-`/etc/letsencrypt`, `/var/www/html` explicitly (the compose file does).
+This release also pins NGINX, the official Alpine slim base digest, source
+SHA256, and OpenSSL package revision together. Do not bump only the visible
+NGINX version; use the atomic upgrade rule below and rerun the full local/CI
+matrix.
 
 ## Optional modules
 
@@ -388,15 +334,81 @@ the later one win.
    `reuseport`. See the comment in `10-example-static.conf`.
 5. `docker exec nginx nginx -t && docker exec nginx nginx -s reload`.
 
+## Application-owned security headers
+
+The examples below are deliberately site configuration, not base-image
+defaults. Native `add_header` is fine when the application owns the response
+and there is no competing upstream value. Use `headers-more` when you need
+explicit replacement or clearing semantics.
+
+### Ordinary HTTPS website
+
+A conventional site might choose a policy like this:
+
+```nginx
+server {
+    listen 443 ssl;
+    http2 on;
+    server_name www.example.com;
+
+    # Application-owned choices — review them for this site.
+    more_set_headers "Strict-Transport-Security: max-age=31536000";
+    more_set_headers "X-Content-Type-Options: nosniff";
+    more_set_headers "X-Frame-Options: SAMEORIGIN";
+    more_set_headers "Referrer-Policy: strict-origin-when-cross-origin";
+    more_set_headers "Permissions-Policy: geolocation=(), microphone=(), camera=()";
+    more_set_headers "Cross-Origin-Opener-Policy: same-origin";
+    more_set_headers "Content-Security-Policy: frame-ancestors 'self'";
+
+    # ...
+}
+```
+
+That is an example, not a recommendation for every workload. A public asset
+host, OAuth callback, iframe application or cross-origin app can require a
+different policy.
+
+### Microsoft Office Add-in / embeddable application
+
+An Office Add-in can require cross-origin framing and popup communication. The
+base image must not force XFO or a stricter COOP value:
+
+```nginx
+server {
+    listen 443 ssl;
+    http2 on;
+    server_name addin.example.com;
+
+    location /office-addin/ {
+        # The application intentionally allows popup/opener communication.
+        more_set_headers "Cross-Origin-Opener-Policy: unsafe-none";
+
+        # Replace these example parent origins with the actual Office hosts
+        # used by your deployment.
+        more_set_headers "Content-Security-Policy: frame-ancestors 'self' https://office-parent.example";
+
+        # Deliberately NO X-Frame-Options is set here.
+        #
+        # If the upstream application itself emits X-Frame-Options and this
+        # embeddable route must remove it, the site may explicitly choose:
+        # more_clear_headers "X-Frame-Options";
+
+        proxy_pass http://office_addin_upstream;
+    }
+}
+```
+
+The same principle applies to Google/Microsoft login flows: the application
+that knows how its popup, iframe and CSP model works owns those headers. The
+base image does not silently override it.
+
 ## Snippet reference
 
 | Snippet                          | Include where      | Purpose                                             |
 |----------------------------------|--------------------|-----------------------------------------------------|
 | `tls.conf`                       | inside `server {}` | TLS 1.2/1.3, modern ciphers, OCSP stapling          |
 | `http3.conf`                     | inside `server {}` | `Alt-Svc`, `quic_retry` (`quic_gso` opt-in)         |
-| `security-headers.conf`          | (auto, http {})    | Default headers via `more_set_headers` — see below  |
-| `security-headers-allow-framing.conf` | server/location | Clear XFO only; caller sets CSP `frame-ancestors` |
-| `security-headers-popup-auth.conf` | server/location   | COOP override for popup/OAuth flows                  |
+| `security-headers.conf`          | inside `http {}`  | **Opt-in only** example policy; never auto-loaded     |
 | `real-ip.conf`                   | inside `http {}`   | Recover client IP behind a proxy/CDN (opt-in)       |
 | `acme-challenge.conf`            | inside any server  | `/.well-known/acme-challenge/` for Let's Encrypt    |
 | `proxy-defaults.conf`            | inside `location`  | Standard proxy headers + keepalive                  |
@@ -428,43 +440,21 @@ the later one win.
 
 ## Behaviour worth knowing about
 
-* **Security headers use `more_set_headers`, not `add_header`.** `add_header`
-  does not accumulate: any `server`/`location` block declaring one of its own
-  discards every `add_header` it inherited. Several shipped snippets do exactly
-  that (`http3.conf` sets `Alt-Svc`, `static-cache.conf` sets `Cache-Control`),
-  which silently stripped the whole security-header set from TLS vhosts and
-  from every static asset. headers-more lives in a separate directive family,
-  so a downstream `add_header` can no longer clobber it — and it merges
-  properly: inherited http-level operations run first and narrower
-  `server`/`location` operations run afterwards. This is why
-  `more_clear_headers "X-Frame-Options";` can remove the global SAMEORIGIN
-  for one embeddable route without dropping HSTS, nosniff, Referrer-Policy,
-  Permissions-Policy, or COOP.
-* **Framing is opt-out, not globally disabled.** Normal responses carry exactly
-  one `X-Frame-Options: SAMEORIGIN`. For Office Add-ins or another explicitly
-  embeddable surface, include `security-headers-allow-framing.conf` in that
-  server/location and set a narrow CSP `frame-ancestors` allow-list there.
-  Do not use `add_header X-Frame-Options ...`; it can create duplicate,
-  conflicting response headers.
-* **Popup authentication has its own opt-in COOP override.** The global default
-  remains `Cross-Origin-Opener-Policy: same-origin`. For routes/sites using a
-  cross-origin popup auth flow, include `security-headers-popup-auth.conf` to
-  emit exactly one `same-origin-allow-popups` value while preserving every
-  other security header. Put it at `server {}` scope when a login popup can be
-  launched from many pages (a common blog/WordPress pattern), or only on the
-  login route when that route is the sole opener. This avoids cutting the
-  opener communication used by popup-based Google Identity flows while keeping
-  the stricter default everywhere else.
-* **CSP / COEP / CORP stay application-owned.** The base image deliberately
-  does not invent a global CSP, Cross-Origin-Embedder-Policy, or
-  Cross-Origin-Resource-Policy. Those headers need knowledge of each
-  application's scripts, frames, fonts, OAuth flows and asset-sharing model.
-  The framing and popup-auth snippets change only XFO or COOP respectively.
-* **HSTS is scoped to HTTPS and omits `includeSubDomains`.** A `map` on
-  `$https` means the header never goes out over plaintext. `includeSubDomains`
-  is a one-way door — it takes down every subdomain that is not HTTPS, for the
-  full `max-age`, with no remote undo — so it is opt-in per site. See
-  `snippets/security-headers.conf`.
+* **Application security policy is intentionally absent by default.** The base
+  image does not emit CSP, COOP, CORP, COEP, X-Frame-Options,
+  Permissions-Policy, Referrer-Policy, HSTS, or X-Content-Type-Options. This
+  prevents a transport/runtime image from breaking Office Add-ins, OAuth
+  popups, iframes, public assets, or an upstream that already owns its policy.
+* **`headers-more` is a tool, not a policy.** Applications may use
+  `more_set_headers` to replace/set a response header and
+  `more_clear_headers` to remove one. Native `add_header` also remains
+  available. Because the base does not pre-populate these application headers,
+  a site can choose either mechanism without fighting an invisible global
+  default.
+* **`security-headers.conf` is opt-in.** It is shipped only as a convenient
+  example for applications that explicitly want that particular baseline. No
+  base config, fallback vhost, entrypoint, or other snippet includes it.
+
 * **`resolver` is generated at boot** from the container's own
   `/etc/resolv.conf` into `/etc/nginx/resolver.conf`. Under Docker that is the
   embedded DNS at `127.0.0.11`, which is what makes `proxy_pass` to a variable
@@ -537,13 +527,26 @@ docker build -t my-nginx -f mainline/alpine/Dockerfile .
 ./tests/validate-examples.sh my-nginx # nginx -t over all examples together
 ```
 
-CI runs both against every `ENABLE_*` flavour. `nginx -t` alone only proves the
+CI exercises every `ENABLE_*` flavour. `nginx -t` alone only proves the
 config parses — the smoke test also verifies the runtime `nginx -v` matches
 `NGINX_VERSION`, mandatory dynamic modules exist and load, HTTP/2 and the QUIC
-listener work, the default XFO is singular, Office-style embedding routes can
-clear XFO while keeping CSP `frame-ancestors` and all other security headers,
-custom XFO overrides do not duplicate, and popup-auth routes can locally relax
-COOP without weakening the global default.
+listener work, the bare image emits none of the application-policy headers,
+`add_header` and `more_set_headers` each produce exactly one application
+value, Office-style `COOP: unsafe-none` works without forced XFO, and
+upstream-owned COOP/XFO pass through once without base-image duplication.
+
+Useful manual acceptance checks after a local build:
+
+```sh
+docker run --rm --entrypoint nginx my-nginx -T 2>&1 \
+  | grep -F 'include /etc/nginx/snippets/security-headers.conf;' \
+  && echo 'ERROR: policy snippet is auto-loaded' || true
+
+curl -skI https://127.0.0.1:<published-tls-port>/ \
+  | grep -Ei '^(Strict-Transport-Security|X-Content-Type-Options|X-Frame-Options|Referrer-Policy|Permissions-Policy|Cross-Origin-Opener-Policy|Cross-Origin-Resource-Policy|Cross-Origin-Embedder-Policy|Content-Security-Policy):'
+```
+
+The second command must print nothing for a bare image.
 
 ## Verifying HTTP/3
 
