@@ -112,6 +112,13 @@ for feature in --with-control-api --with-http_json_module \
     esac
 done
 
+nginx_help=$(docker run --rm --entrypoint nginx "$IMAGE" -h 2>&1 || true)
+if grep -q -- '-l addr' <<<"$nginx_help"; then
+    pass "control API socket option is present in nginx -h"
+else
+    bad "control API socket option missing from nginx -h"
+fi
+
 case "$nginx_v" in
     *"OpenSSL 3.5"*|*"OpenSSL 3.6"*|*"OpenSSL 4"*) pass "nginx built with QUIC-capable OpenSSL" ;;
     *) bad "nginx -V does not report OpenSSL >= 3.5" ;;
