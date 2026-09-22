@@ -80,6 +80,12 @@ else
     bad "nginx -t failed"
 fi
 
+has_zstd=0
+if docker run --rm --entrypoint sh "$IMAGE" -c 'test -f /usr/lib/nginx/modules/ngx_http_zstd_filter_module.so'; then
+    has_zstd=1
+    pass "optional zstd dynamic module detected"
+fi
+
 for module in \
     ngx_http_headers_more_filter_module.so \
     ngx_http_brotli_filter_module.so \
@@ -206,6 +212,10 @@ check "healthz has a single Content-Type" "$ct" "1"
 echo "==> security-header overrides and cache-purge fixture"
 docker cp "$ROOT/tests/cache-purge-http.conf" \
     "$NAME:/etc/nginx/http.d/90-cache-purge-test.conf" >/dev/null
+if [ "$has_zstd" -eq 1 ]; then
+    docker cp "$ROOT/tests/zstd-http.conf" \
+        "$NAME:/etc/nginx/http.d/91-zstd-test.conf" >/dev/null
+fi
 docker cp "$ROOT/tests/header-overrides.conf" \
     "$NAME:/etc/nginx/conf.d/90-header-overrides-test.conf" >/dev/null
 
@@ -304,6 +314,15 @@ if grep -qi '^content-encoding: br' <<<"$brotli_hdrs"; then
     pass "Brotli filter compresses eligible response"
 else
     bad "Brotli response missing Content-Encoding: br"
+fi
+
+if [ "$has_zstd" -eq 1 ]; then
+    zstd_hdrs=$(fetch_test_headers /brotli "Accept-Encoding: zstd")
+    if grep -qi '^content-encoding: zstd' <<<"$zstd_hdrs"; then
+        pass "zstd filter compresses eligible response"
+    else
+        bad "zstd response missing Content-Encoding: zstd"
+    fi
 fi
 
 echo "==> ngx_cache_purge functional test"
