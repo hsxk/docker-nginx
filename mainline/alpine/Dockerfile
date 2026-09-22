@@ -24,26 +24,26 @@
 #     --build-arg ENABLE_VTS=1 \
 #     -f mainline/alpine/Dockerfile .
 
-# Alpine 3.22 is the oldest branch shipping OpenSSL 3.5 (the QUIC-capable one)
-# and is supported until 2027-05. Do not drop below this: 3.21 and older ship
-# OpenSSL 3.3, whose QUIC API is client-only and cannot serve HTTP/3.
+# Base on the official mainline Alpine slim image, pinned to the immutable
+# multi-arch index digest. The tag makes the intended NGINX/Alpine pair obvious;
+# the digest prevents a later rebuild of the same tag from changing our base.
 #
-# Pinned by digest, not just by tag: `alpine:3.22` is a moving target, so two
-# builds of the same commit could otherwise produce different images — which
-# would make the "byte-reproducible" claim below false. The tradeoff is that
-# base security updates now need a deliberate bump; the Trivy job in CI is what
-# tells you when this pin has gone stale.
-#
-# To bump: docker buildx imagetools inspect alpine:3.22 --format '{{.Manifest.Digest}}'
-ARG ALPINE_VERSION=3.22
-ARG ALPINE_DIGEST=sha256:14358309a308569c32bdc37e2e0e9694be33a9d99e68afb0f5ff33cc1f695dce
-FROM alpine:${ALPINE_VERSION}@${ALPINE_DIGEST} AS builder
+# Keep all three values in lock-step. The first build guard below fails if the
+# official image's embedded NGINX_VERSION ever disagrees with this source build.
+ARG NGINX_VERSION=1.31.6
+ARG NGINX_FROM_IMAGE=nginx:1.31.6-alpine3.24-slim
+ARG NGINX_FROM_DIGEST=sha256:80149a0e5bc9fa0b8beaff5b8a453f71ba8ba038895d418381297ffa5cd57782
+FROM ${NGINX_FROM_IMAGE}@${NGINX_FROM_DIGEST} AS builder
+ARG NGINX_VERSION
+
+RUN set -eux; \
+    image_version="$(nginx -v 2>&1 | sed 's#^nginx version: nginx/##')"; \
+    test "$image_version" = "$NGINX_VERSION"
 
 # ─── Pinned source versions (bump deliberately) ─────────────────────────────
-# All refs are pinned to immutable commit SHAs / signed release tags so the
-# build is byte-reproducible. To bump: update both REF and the matching SHA256.
-ARG NGINX_VERSION=1.31.3
-ARG NGINX_SHA256=a7657c50811c2d92d9895395e8b873ef60398142c4db21eb647811c38f6dd525
+# All refs are pinned to immutable commit SHAs / signed release tags. The NGINX
+# tarball checksum must be updated together with NGINX_VERSION.
+ARG NGINX_SHA256=974ed5298a5e398e008704ed5db284e655fc270c596493dbccada452448fc9f1
 
 ARG HEADERS_MORE_VERSION=0.40
 ARG HEADERS_MORE_SHA256=c14cb5e6c998590c209efbf77bd7637ce2cab02332e4192756a8af5b26ba4284
@@ -62,8 +62,8 @@ ARG NGX_CACHE_PURGE_REF=285354eddd5675c765ba2b79dac09f5d3065b22f
 ARG ZSTD_NGINX_REPO=https://github.com/tokers/zstd-nginx-module
 ARG ZSTD_NGINX_REF=057a7d339af1111d04b5a9ac5ae9b0250d17cd94
 
-ARG NJS_VERSION=1.0.0
-ARG NJS_SHA256=56fe6560549cbcb7fb5740534b541bb153250d8772aa16ac18bc30eb0cc498dd
+ARG NJS_VERSION=1.0.1
+ARG NJS_SHA256=74372cfcbf11eb0a71bc555e19dc785f61d561d5663d254474da6c8c9e50a6a7
 
 ARG GEOIP2_VERSION=3.4
 ARG GEOIP2_SHA256=ad72fc23348d715a330994984531fab9b3606e160483236737f9a4a6957d9452
@@ -201,10 +201,10 @@ RUN set -eux; \
     export NJS_LIBXSLT; \
     \
     EXTRA_MODULES=""; \
-    [ "${ENABLE_ZSTD}"   = "1" ] && EXTRA_MODULES="$EXTRA_MODULES --add-module=./extensions/zstd-nginx-module"; \
-    [ "${ENABLE_NJS}"    = "1" ] && EXTRA_MODULES="$EXTRA_MODULES --add-module=./extensions/njs/nginx"; \
-    [ "${ENABLE_GEOIP2}" = "1" ] && EXTRA_MODULES="$EXTRA_MODULES --add-module=./extensions/geoip2"; \
-    [ "${ENABLE_VTS}"    = "1" ] && EXTRA_MODULES="$EXTRA_MODULES --add-module=./extensions/vts"; \
+    [ "${ENABLE_ZSTD}"   = "1" ] && EXTRA_MODULES="$EXTRA_MODULES --add-dynamic-module=./extensions/zstd-nginx-module"; \
+    [ "${ENABLE_NJS}"    = "1" ] && EXTRA_MODULES="$EXTRA_MODULES --add-dynamic-module=./extensions/njs/nginx"; \
+    [ "${ENABLE_GEOIP2}" = "1" ] && EXTRA_MODULES="$EXTRA_MODULES --add-dynamic-module=./extensions/geoip2"; \
+    [ "${ENABLE_VTS}"    = "1" ] && EXTRA_MODULES="$EXTRA_MODULES --add-dynamic-module=./extensions/vts"; \
     \
     ./configure \
       --prefix=/etc/nginx \
@@ -246,9 +246,9 @@ RUN set -eux; \
       --with-http_flv_module \
       --with-stream --with-stream_ssl_module \
       --with-stream_ssl_preread_module --with-stream_realip_module \
-      --add-module=./extensions/ngx_cache_purge \
-      --add-module=./extensions/ngx_brotli \
-      --add-module=./extensions/headers-more \
+      --add-dynamic-module=./extensions/ngx_cache_purge \
+      --add-dynamic-module=./extensions/ngx_brotli \
+      --add-dynamic-module=./extensions/headers-more \
       $EXTRA_MODULES \
       --with-cc-opt="-O2 -fstack-protector-strong -Wformat -Werror=format-security \
                      -Wno-deprecated-declarations -Wno-cast-function-type \
@@ -256,12 +256,25 @@ RUN set -eux; \
       --with-ld-opt="-Wl,--as-needed -Wl,-z,relro -Wl,-z,now"; \
     make -j"$(nproc)"; \
     make install; \
-    strip /usr/sbin/nginx
+    test -f /usr/lib/nginx/modules/ngx_http_headers_more_filter_module.so; \
+    test -f /usr/lib/nginx/modules/ngx_http_brotli_filter_module.so; \
+    test -f /usr/lib/nginx/modules/ngx_http_brotli_static_module.so; \
+    test -f /usr/lib/nginx/modules/ngx_http_cache_purge_module.so; \
+    mkdir -p /etc/nginx/modules-enabled; \
+    find /usr/lib/nginx/modules -maxdepth 1 -type f -name '*.so' -print | sort | \
+      while IFS= read -r module; do printf 'load_module %s;\n' "$module"; done \
+      > /etc/nginx/modules-enabled/50-third-party.conf; \
+    strip /usr/sbin/nginx /usr/lib/nginx/modules/*.so
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Runtime image
 # ─────────────────────────────────────────────────────────────────────────────
-FROM alpine:${ALPINE_VERSION}@${ALPINE_DIGEST}
+FROM ${NGINX_FROM_IMAGE}@${NGINX_FROM_DIGEST}
+ARG NGINX_VERSION
+
+RUN set -eux; \
+    image_version="$(nginx -v 2>&1 | sed 's#^nginx version: nginx/##')"; \
+    test "$image_version" = "$NGINX_VERSION"
 
 LABEL org.opencontainers.image.title="docker-nginx-quic" \
       org.opencontainers.image.description="NGINX with HTTP/3 (OpenSSL 3.5), Brotli, headers-more, cache-purge" \
@@ -274,8 +287,8 @@ ARG ENABLE_GEOIP2=0
 ARG ENABLE_NJS_XML=0
 
 RUN set -eux; \
-    addgroup -g 101 -S nginx; \
-    adduser -S -D -H -u 101 -h /var/cache/nginx -s /sbin/nologin -G nginx -g nginx nginx; \
+    # nginx user/group already come from the pinned official base image. \
+    test "$(id -u nginx)" = "101"; \
     # Runtime libs only. No libxslt (we don't build xslt module).
     # `openssl` brings in libssl3/libcrypto3 (which the nginx binary links
     # against) and gives the entrypoint the CLI it needs to mint the fallback
@@ -296,9 +309,12 @@ RUN set -eux; \
     ln -sf /dev/stdout /var/log/nginx/access.log; \
     ln -sf /dev/stderr /var/log/nginx/error.log
 
-# nginx binary + bundled defaults
-COPY --from=builder /usr/sbin/nginx        /usr/sbin/nginx
-COPY --from=builder /etc/nginx/mime.types  /etc/nginx/mime.types
+# nginx binary + modules are built from the exact same 1.31.6 source/configure
+# invocation, so dynamic-module ABI cannot drift away from the runtime binary.
+COPY --from=builder /usr/sbin/nginx         /usr/sbin/nginx
+COPY --from=builder /usr/lib/nginx/modules/ /usr/lib/nginx/modules/
+COPY --from=builder /etc/nginx/modules-enabled/ /etc/nginx/modules-enabled/
+COPY --from=builder /etc/nginx/mime.types   /etc/nginx/mime.types
 COPY --from=builder /etc/nginx/fastcgi.conf /etc/nginx/fastcgi.conf
 COPY --from=builder /etc/nginx/uwsgi_params /etc/nginx/uwsgi_params
 COPY --from=builder /etc/nginx/scgi_params  /etc/nginx/scgi_params
