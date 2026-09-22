@@ -13,7 +13,7 @@ env:
 jobs:
   # ─────────────────────────────────────────────────────────────────────────
   # Smoke test: build every ENABLE_* permutation we ship (single-arch, no
-  # push). Catches regressions in optional-module integration before merge.
+  # push). Catches regressions in optional-module integration before publish.
   # ─────────────────────────────────────────────────────────────────────────
   matrix-build:
     runs-on: ubuntu-latest
