@@ -1,11 +1,12 @@
 name: Docker Build
 
+# CI is release-only. Development branches, normal main pushes and PRs must
+# be validated locally; a tag is the explicit act that spends CI and publishes.
 on:
   push:
-    branches: [main, master]
-    tags: ['*']
-  pull_request:
-    branches: [main, master]
+    tags:
+      - '*'
+      - '!1.31.6'
 
 env:
   IMAGE: hsxk/nginx
@@ -14,7 +15,7 @@ env:
 jobs:
   # ─────────────────────────────────────────────────────────────────────────
   # Smoke test: build every ENABLE_* permutation we ship (single-arch, no
-  # push). Catches regressions in optional-module integration before merge.
+  # push). Catches regressions in optional-module integration before publish.
   # ─────────────────────────────────────────────────────────────────────────
   matrix-build:
     runs-on: ubuntu-latest

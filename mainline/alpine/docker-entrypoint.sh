@@ -8,8 +8,9 @@
 #   3. If no certificate exists at /etc/letsencrypt/_default/, drop in a
 #      throw-away self-signed pair so nginx can boot for local testing.
 #      In production, mount your real certs into /etc/letsencrypt/.
-#   4. Validate config with `nginx -t`.
-#   5. Exec the requested command (default: nginx -g 'daemon off;').
+#   4. Verify the custom nginx binary has not been replaced by apk/downstream.
+#   5. Validate config with `nginx -t`.
+#   6. Exec the requested command (default: nginx -g 'daemon off;').
 #
 # Periodic reload (for cert renewal) is the host's job — run e.g.:
 #     docker exec nginx nginx -s reload
@@ -167,7 +168,32 @@ gen_resolver
 gen_quic_bpf
 ensure_default_cert
 
-# 4. If the user passed `nginx ...`, validate config first.
+# 4. The runtime base owns an nginx apk package, but this image deliberately
+# replaces /usr/sbin/nginx with a source-built binary that exactly matches the
+# third-party dynamic modules above. If a downstream layer runs
+# `apk upgrade nginx` / `apk fix nginx`, apk can restore its package-owned
+# binary and silently break that ABI/config contract. Detect that replacement
+# before attempting to serve traffic and explain the fix.
+verify_nginx_binary() {
+    if [ -z "${NGINX_VERSION:-}" ]; then
+        echo "[entrypoint] ERROR: NGINX_VERSION is missing from the runtime image." >&2
+        exit 1
+    fi
+
+    version_line=$(nginx -v 2>&1 || true)
+    expected="nginx version: nginx/${NGINX_VERSION} (docker-nginx-quic)"
+
+    if [ "$version_line" != "$expected" ]; then
+        echo "[entrypoint] ERROR: unexpected nginx binary: $version_line" >&2
+        echo "[entrypoint] expected: $expected" >&2
+        echo "[entrypoint] Do not apk upgrade/fix the nginx package in a downstream image; bump this image's pinned base/source versions and rebuild instead." >&2
+        exit 1
+    fi
+}
+
+verify_nginx_binary
+
+# 5. If the user passed `nginx ...`, validate config first.
 case "${1:-}" in
     nginx|/usr/sbin/nginx)
         echo "[entrypoint] running 'nginx -t'…"

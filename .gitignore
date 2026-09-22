@@ -3,3 +3,4 @@ www/
 *.pem
 *.key
 *.crt
+.artifacts/

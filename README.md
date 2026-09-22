@@ -3,20 +3,33 @@
 A small, hardened NGINX Docker image with HTTP/3 (QUIC), Brotli, headers-more,
 and FastCGI cache-purge. HTTP/3 runs on **stock OpenSSL 3.5**, linked
 dynamically against the distro package — no vendored TLS fork. Shipped as a
-*toolbox*: the image gives you a sensible base config plus a library of
-include-able snippets — you bring your own sites in `/etc/nginx/conf.d/` and
-any http-level config in `/etc/nginx/http.d/`.
+*toolbox*: the image gives you a sensible transport/runtime base plus a library
+of include-able snippets — you bring your own sites in `/etc/nginx/conf.d/`
+and any http-level config in `/etc/nginx/http.d/`.
+
+**The base image is intentionally neutral about application/browser security
+policy.** A bare container does not emit CSP, COOP, CORP, COEP,
+X-Frame-Options, Permissions-Policy, Referrer-Policy, HSTS, or
+X-Content-Type-Options. Those headers belong to each application because the
+correct policy depends on its framing, OAuth, popup, asset-sharing and
+cross-origin requirements. `headers-more` is available when a site needs
+replacement/clearing semantics, but it is not used to invent a global policy.
 
 ## What's in the image
 
-| Component               | Version (default)                | Notes                              |
-|-------------------------|----------------------------------|------------------------------------|
-| NGINX                   | `1.31.3`                         | tarball SHA256 verified            |
-| Alpine                  | `3.22` (pinned by digest)        | oldest branch shipping OpenSSL 3.5 |
-| OpenSSL                 | `3.5.x` (Alpine package)         | for HTTP/3 — see below             |
-| ngx_brotli              | `google/ngx_brotli` @ pinned SHA | upstream, last update 2023-10      |
-| ngx_cache_purge         | `nginx-modules/ngx_cache_purge`  | active fork; nginx ≥1.25 compat    |
-| headers-more-nginx      | `0.40`                           | tarball SHA256 verified            |
+| Component               | Version / immutable ref                         | Notes                              |
+|-------------------------|-------------------------------------------------|------------------------------------|
+| NGINX                   | `1.31.6`                                       | source SHA256 verified             |
+| Official base           | `nginx:1.31.6-alpine3.24-slim`                | pinned by OCI index digest         |
+| Alpine                  | `3.24`                                          | from official slim image           |
+| OpenSSL                 | `3.5.8-r0`                                      | build + runtime package pinned      |
+| headers-more-nginx      | `0.40`                                           | tarball SHA256 verified            |
+| ngx_brotli              | `a71f9312c2deb28875acc7bacfdd5695a111aa53`    | google/ngx_brotli                  |
+| ngx_cache_purge         | `285354eddd5675c765ba2b79dac09f5d3065b22f`    | upstream lists tested through 1.29; this image runs a live purge smoke test |
+| zstd (optional)         | `057a7d339af1111d04b5a9ac5ae9b0250d17cd94`    | tokers/zstd-nginx-module           |
+| njs (optional)          | `1.0.1`                                          | security-fix release               |
+| GeoIP2 (optional)       | `3.4`                                            | SHA256-verified release            |
+| VTS (optional)          | `0.2.7`                                          | SHA256-verified release            |
 
 ### Why the QUIC backend is plain OpenSSL now
 
@@ -31,8 +44,11 @@ version you pinned and invisible to everything that looks for CVEs**: it is not
 an `apk` package, so it does not appear in the image SBOM and scanners cannot
 see it. quictls' last QUIC release is based on OpenSSL 3.3.0 (April 2024) and
 the project wound down once OpenSSL 3.5 LTS landed, so that pin was accumulating
-unpatched OpenSSL advisories that nothing would report. Linking the distro
-package means a base-image rebuild picks up Alpine's security updates.
+unpatched OpenSSL advisories that nothing would report. Alpine packages remain
+visible to SBOM/scanners, but this image intentionally pins both the official
+base digest and the OpenSSL package revision. Security updates therefore require
+an explicit pin bump and full local verification instead of silently changing
+an existing build.
 
 The build fails loudly rather than degrading: if the OpenSSL headers are older
 than 3.5.1, nginx would silently fall back to its `NGX_QUIC_OPENSSL_COMPAT`
@@ -42,16 +58,24 @@ Every external source is pinned to either an immutable git commit SHA or a
 release tag whose tarball is SHA256-verified at build time — flip a version
 and the matching `*_SHA256` ARG together when bumping.
 
+For this release, the NGINX source tarball SHA256 is
+`974ed5298a5e398e008704ed5db284e655fc270c596493dbccada452448fc9f1`.
+The official base image index is pinned to
+`sha256:80149a0e5bc9fa0b8beaff5b8a453f71ba8ba038895d418381297ffa5cd57782`.
+
 ### How this compares to the official `nginx:alpine`
 
 Worth being precise, because the gap is narrower than it used to be. As of
-1.31.3 the official image is *also* built with `--with-http_v3_module` against
-OpenSSL 3.5.7 — HTTP/3 is no longer a reason to leave it. What this image adds
-is the third-party module set, which official does not ship in any form:
+1.31.6 the official image is *also* built with `--with-http_v3_module` against
+OpenSSL 3.5.x — HTTP/3 is no longer a reason to leave it. This image now uses
+the official `nginx:1.31.6-alpine3.24-slim` image itself as the immutable
+runtime/build base, pinned to multi-arch digest
+`sha256:80149a0e5bc9fa0b8beaff5b8a453f71ba8ba038895d418381297ffa5cd57782`.
+What this image adds is the third-party module set and opinionated config:
 
 | | official `nginx:alpine` | this image |
 |---|---|---|
-| nginx / OpenSSL | 1.31.3 / 3.5.7 | 1.31.3 / 3.5.7 |
+| nginx / OpenSSL | 1.31.6 / 3.5.x | 1.31.6 / 3.5.8 |
 | HTTP/3 (QUIC) | yes | yes |
 | Brotli | — | `ngx_brotli` |
 | `headers-more` | — | yes |
@@ -72,49 +96,35 @@ Modules removed vs. the previous image:
 * `--with-http_geoip_module` — MaxMind has EOL'd the GeoIP1 DB format. Use the
   optional `ENABLE_GEOIP2` (see below) for the modern GeoIP2 / libmaxminddb path.
 
-## Upgrading from 1.31.1 or earlier
+## Upgrading from earlier images
 
-Most of this release is bug fixes, but some defaults changed in ways that can
-change what your sites serve. In rough order of "will bite you".
+The NGINX 1.31.6 image changes one important ownership boundary: **application
+security headers are no longer injected by the base image.**
 
-**Override security headers with `more_set_headers`, not `add_header`.** They
-moved out of `add_header` (see [Behaviour worth knowing about](#behaviour-worth-knowing-about)
-for why). The families do not see each other, so a vhost doing
-`add_header X-Frame-Options "DENY" always;` no longer replaces the default —
-the response now carries both `SAMEORIGIN` and `DENY`, which browsers treat as
-conflicting and may ignore outright. Grep your configs for `add_header` naming
-any of: `Strict-Transport-Security`, `X-Content-Type-Options`, `X-Frame-Options`,
-`Referrer-Policy`, `Permissions-Policy`, `Cross-Origin-Opener-Policy` — and
-switch those lines to `more_set_headers "Name: value";`.
+Earlier revisions automatically included
+`/etc/nginx/snippets/security-headers.conf` from the global `http {}` block.
+That could collide with an upstream application's headers or with a site's own
+`add_header`, producing duplicate values and breaking legitimate cross-origin
+behaviour such as Microsoft Office Add-in framing or popup communication.
 
-**HSTS lost `includeSubDomains`.** If you were relying on it, set it explicitly
-per site. Browsers that already cached the old directive keep honouring it until
-its max-age expires.
+When upgrading:
 
-**OCSP stapling is off.** Re-enable in `snippets/tls.conf` if your CA publishes
-OCSP responder URLs (Let's Encrypt no longer does).
+1. Audit each site and move the security policy it actually needs into that
+   site's own `server {}` / `location {}` configuration.
+2. Do not assume the base image supplies HSTS, nosniff, XFO, COOP, CSP, or any
+   other browser policy.
+3. Remove workarounds that existed only to fight the old global policy.
+4. If an upstream already owns a header, normally pass it through unchanged.
+   Use `more_set_headers` when you intentionally want to replace its value and
+   `more_clear_headers` when the application explicitly wants it removed.
+5. `security-headers.conf` still ships as an **opt-in example only**. It is not
+   loaded by `nginx.conf`, the entrypoint, the fallback vhost, or any other
+   shipped snippet.
 
-**TLS session tickets are on.** If you deliberately disabled resumption for
-forward-secrecy reasons, set `ssl_session_tickets off;` again — but read the
-note in `snippets/tls.conf` first, because on TLS 1.3 that disables resumption
-entirely rather than hardening it.
-
-**The FastCGI micro-cache no longer stores responses carrying `Set-Cookie`.**
-Expect a lower hit rate on apps that set cookies on otherwise-cacheable pages;
-this is deliberate, since the old behaviour could replay one visitor's cookie to
-everyone. See `snippets/fastcgi-cache.conf` to opt back in knowingly.
-
-**`ENABLE_NJS=1` no longer builds njs's `xml` module.** Add `ENABLE_NJS_XML=1`
-if your njs scripts parse XML. njs itself also jumped 0.8.7 → 1.0.0; check your
-scripts against its changelog.
-
-**`resolver` is derived from the container's DNS** instead of hardcoded public
-servers. If you depended on nginx resolving via 1.1.1.1 specifically, mount your
-own `/etc/nginx/resolver.conf`.
-
-**No more `VOLUME` declarations.** They created anonymous volumes on every
-`docker run` — one of which shadowed the `/dev/stdout` log symlinks. Mount
-`/etc/letsencrypt`, `/var/www/html` explicitly (the compose file does).
+This release also pins NGINX, the official Alpine slim base digest, source
+SHA256, and OpenSSL package revision together. Do not bump only the visible
+NGINX version; use the atomic upgrade rule below and rerun the full local/CI
+matrix.
 
 ## Optional modules
 
@@ -157,12 +167,31 @@ format), bind-mount your own file over `/etc/nginx/nginx.conf` — but start fro
 the one in this repo, because the image's snippets assume the zones, maps and
 resolver it declares.
 
-All versions are `ARG`s — override at build time:
-```sh
-docker build \
-  --build-arg NGINX_VERSION=1.31.2 \
-  -t my-nginx -f mainline/alpine/Dockerfile .
-```
+### NGINX upgrade rule: change the pins atomically
+
+Do **not** override only `NGINX_VERSION` at build time. An NGINX upgrade is one
+atomic change and must update all of these together in the Dockerfile:
+
+* `NGINX_VERSION`
+* `NGINX_FROM_IMAGE`
+* `NGINX_FROM_DIGEST`
+* `NGINX_SHA256`
+
+The builder immediately compares the pinned official image's `nginx -v` with
+`NGINX_VERSION`, and the source tarball is checksum-verified before configure.
+Changing only the visible version therefore fails deliberately instead of
+quietly compiling modules for one NGINX while running another. If the Alpine
+base's OpenSSL revision changes, update `OPENSSL_PACKAGE_VERSION` in the same
+change and re-run the full local verification matrix.
+
+The custom binary is tagged at compile time as
+`nginx/<version> (docker-nginx-quic)`. The official base still contains Alpine
+package metadata for nginx, so **do not run `apk upgrade nginx` or
+`apk fix nginx` in a downstream image**: that can restore the package-owned
+binary over the source-built binary while leaving these third-party modules in
+place. The entrypoint checks the build marker and fails with a clear error if
+that happens. Upgrade nginx by bumping the pins above and rebuilding this image;
+site configs, snippets and other Alpine packages remain freely overridable.
 
 ## Quick start
 
@@ -305,13 +334,81 @@ the later one win.
    `reuseport`. See the comment in `10-example-static.conf`.
 5. `docker exec nginx nginx -t && docker exec nginx nginx -s reload`.
 
+## Application-owned security headers
+
+The examples below are deliberately site configuration, not base-image
+defaults. Native `add_header` is fine when the application owns the response
+and there is no competing upstream value. Use `headers-more` when you need
+explicit replacement or clearing semantics.
+
+### Ordinary HTTPS website
+
+A conventional site might choose a policy like this:
+
+```nginx
+server {
+    listen 443 ssl;
+    http2 on;
+    server_name www.example.com;
+
+    # Application-owned choices — review them for this site.
+    more_set_headers "Strict-Transport-Security: max-age=31536000";
+    more_set_headers "X-Content-Type-Options: nosniff";
+    more_set_headers "X-Frame-Options: SAMEORIGIN";
+    more_set_headers "Referrer-Policy: strict-origin-when-cross-origin";
+    more_set_headers "Permissions-Policy: geolocation=(), microphone=(), camera=()";
+    more_set_headers "Cross-Origin-Opener-Policy: same-origin";
+    more_set_headers "Content-Security-Policy: frame-ancestors 'self'";
+
+    # ...
+}
+```
+
+That is an example, not a recommendation for every workload. A public asset
+host, OAuth callback, iframe application or cross-origin app can require a
+different policy.
+
+### Microsoft Office Add-in / embeddable application
+
+An Office Add-in can require cross-origin framing and popup communication. The
+base image must not force XFO or a stricter COOP value:
+
+```nginx
+server {
+    listen 443 ssl;
+    http2 on;
+    server_name addin.example.com;
+
+    location /office-addin/ {
+        # The application intentionally allows popup/opener communication.
+        more_set_headers "Cross-Origin-Opener-Policy: unsafe-none";
+
+        # Replace these example parent origins with the actual Office hosts
+        # used by your deployment.
+        more_set_headers "Content-Security-Policy: frame-ancestors 'self' https://office-parent.example";
+
+        # Deliberately NO X-Frame-Options is set here.
+        #
+        # If the upstream application itself emits X-Frame-Options and this
+        # embeddable route must remove it, the site may explicitly choose:
+        # more_clear_headers "X-Frame-Options";
+
+        proxy_pass http://office_addin_upstream;
+    }
+}
+```
+
+The same principle applies to Google/Microsoft login flows: the application
+that knows how its popup, iframe and CSP model works owns those headers. The
+base image does not silently override it.
+
 ## Snippet reference
 
 | Snippet                          | Include where      | Purpose                                             |
 |----------------------------------|--------------------|-----------------------------------------------------|
 | `tls.conf`                       | inside `server {}` | TLS 1.2/1.3, modern ciphers, OCSP stapling          |
 | `http3.conf`                     | inside `server {}` | `Alt-Svc`, `quic_retry` (`quic_gso` opt-in)         |
-| `security-headers.conf`          | (auto, http {})    | Default headers via `more_set_headers` — see below  |
+| `security-headers.conf`          | inside `http {}`  | **Opt-in only** example policy; never auto-loaded     |
 | `real-ip.conf`                   | inside `http {}`   | Recover client IP behind a proxy/CDN (opt-in)       |
 | `acme-challenge.conf`            | inside any server  | `/.well-known/acme-challenge/` for Let's Encrypt    |
 | `proxy-defaults.conf`            | inside `location`  | Standard proxy headers + keepalive                  |
@@ -343,21 +440,21 @@ the later one win.
 
 ## Behaviour worth knowing about
 
-* **Security headers use `more_set_headers`, not `add_header`.** `add_header`
-  does not accumulate: any `server`/`location` block declaring one of its own
-  discards every `add_header` it inherited. Several shipped snippets do exactly
-  that (`http3.conf` sets `Alt-Svc`, `static-cache.conf` sets `Cache-Control`),
-  which silently stripped the whole security-header set from TLS vhosts and
-  from every static asset. headers-more lives in a separate directive family,
-  so a downstream `add_header` can no longer clobber it — and it merges
-  properly: a `server`/`location` block declaring its own `more_set_headers`
-  gets the inherited set *plus* its own, its own applied last. Overriding one
-  header for one site is a one-liner and the rest still applies.
-* **HSTS is scoped to HTTPS and omits `includeSubDomains`.** A `map` on
-  `$https` means the header never goes out over plaintext. `includeSubDomains`
-  is a one-way door — it takes down every subdomain that is not HTTPS, for the
-  full `max-age`, with no remote undo — so it is opt-in per site. See
-  `snippets/security-headers.conf`.
+* **Application security policy is intentionally absent by default.** The base
+  image does not emit CSP, COOP, CORP, COEP, X-Frame-Options,
+  Permissions-Policy, Referrer-Policy, HSTS, or X-Content-Type-Options. This
+  prevents a transport/runtime image from breaking Office Add-ins, OAuth
+  popups, iframes, public assets, or an upstream that already owns its policy.
+* **`headers-more` is a tool, not a policy.** Applications may use
+  `more_set_headers` to replace/set a response header and
+  `more_clear_headers` to remove one. Native `add_header` also remains
+  available. Because the base does not pre-populate these application headers,
+  a site can choose either mechanism without fighting an invisible global
+  default.
+* **`security-headers.conf` is opt-in.** It is shipped only as a convenient
+  example for applications that explicitly want that particular baseline. No
+  base config, fallback vhost, entrypoint, or other snippet includes it.
+
 * **`resolver` is generated at boot** from the container's own
   `/etc/resolv.conf` into `/etc/nginx/resolver.conf`. Under Docker that is the
   embedded DNS at `127.0.0.11`, which is what makes `proxy_pass` to a variable
@@ -400,6 +497,29 @@ the later one win.
 
 ## Testing
 
+For a release candidate, use the local release runner. It does **not** create a
+Git tag, push an image, log in to Docker Hub, or invoke GitHub Actions:
+
+```sh
+bash ./tests/local-release-verify.sh
+```
+
+Before building, it verifies that the moving official
+`NGINX_FROM_IMAGE` tag still resolves to the pinned immutable digest and
+downloads the NGINX source tarball again to verify `NGINX_SHA256`. It also
+rejects shipped configs that use `add_header` for security headers managed by
+headers-more.
+
+It then builds both `base` and `all` locally and writes reproducible evidence
+under `.artifacts/nginx-verify-<UTC timestamp>/`: plain build logs,
+`nginx -V`, `nginx -t`, runtime versions/module lists, smoke results,
+example validation, upstream-pin evidence, and Docker image metadata. The smoke
+suite includes a live ngx_cache_purge cycle (MISS → HIT → PURGE 200 → PURGE 412
+→ MISS), because that module's upstream compatibility table has not yet marked
+NGINX 1.31.x as tested.
+
+For a quicker single-image iteration:
+
 ```sh
 docker build -t my-nginx -f mainline/alpine/Dockerfile .
 
@@ -407,10 +527,26 @@ docker build -t my-nginx -f mainline/alpine/Dockerfile .
 ./tests/validate-examples.sh my-nginx # nginx -t over all examples together
 ```
 
-CI runs both against every `ENABLE_*` flavour. `nginx -t` alone only proves the
-config parses — the smoke test checks the things that have regressed silently
-here before (security headers surviving snippet includes, no HSTS on plaintext,
-the QUIC listener actually bound, OpenSSL new enough for the native QUIC API).
+CI exercises every `ENABLE_*` flavour. `nginx -t` alone only proves the
+config parses — the smoke test also verifies the runtime `nginx -v` matches
+`NGINX_VERSION`, mandatory dynamic modules exist and load, HTTP/2 and the QUIC
+listener work, the bare image emits none of the application-policy headers,
+`add_header` and `more_set_headers` each produce exactly one application
+value, Office-style `COOP: unsafe-none` works without forced XFO, and
+upstream-owned COOP/XFO pass through once without base-image duplication.
+
+Useful manual acceptance checks after a local build:
+
+```sh
+docker run --rm --entrypoint nginx my-nginx -T 2>&1 \
+  | grep -F 'include /etc/nginx/snippets/security-headers.conf;' \
+  && echo 'ERROR: policy snippet is auto-loaded' || true
+
+curl -skI https://127.0.0.1:<published-tls-port>/ \
+  | grep -Ei '^(Strict-Transport-Security|X-Content-Type-Options|X-Frame-Options|Referrer-Policy|Permissions-Policy|Cross-Origin-Opener-Policy|Cross-Origin-Resource-Policy|Cross-Origin-Embedder-Policy|Content-Security-Policy):'
+```
+
+The second command must print nothing for a bare image.
 
 ## Verifying HTTP/3
 
@@ -558,13 +694,14 @@ zstd  -k -19   dist/**/*.{html,css,js,svg}
 
 `.github/workflows/docker-build.yml` runs in two stages:
 
-* **matrix-build** — on every PR + push, builds 6 image flavors
-  (`base`, `zstd`, `njs`, `geoip2`, `vts`, `all`) on a single arch, runs
-  `nginx -V` and `nginx -t` inside each image. No registry push. Uses GitHub
-  Actions cache per-flavor so re-runs are fast.
-* **release** — on tag pushes only, builds the multi-arch (`linux/amd64`,
-  `linux/arm64`) image with `provenance: mode=max` and `sbom: true`, then
-  pushes to Docker Hub. Provenance + SBOM let downstream consumers verify
+* **matrix-build** — runs only when a release tag is pushed. It builds the
+  `base`, `zstd`, `njs`, `njs-xml`, `geoip2`, `vts`, and `all` flavors
+  on a single architecture, then runs `nginx -V`, `nginx -t`, smoke tests,
+  and example/snippet validation. Ordinary branches, main pushes, and PRs do
+  not spend CI.
+* **release** — after that tag's matrix succeeds, builds the multi-arch
+  (`linux/amd64`, `linux/arm64`) image with `provenance: mode=max` and
+  `sbom: true`, then pushes to Docker Hub. Provenance + SBOM let downstream consumers verify
   the image with `docker buildx imagetools inspect --format "{{ json .SBOM }}"`.
 
 Required repository secrets: `DOCKER_USERNAME`, `DOCKER_PASSWORD`.
