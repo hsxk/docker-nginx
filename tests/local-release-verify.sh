@@ -111,6 +111,24 @@ build_and_verify() {
     ' >"$ARTIFACT_DIR/runtime-$flavor.txt" 2>&1
     cat "$ARTIFACT_DIR/runtime-$flavor.txt"
 
+    if [ "$flavor" = all ]; then
+        docker run --rm --entrypoint sh "$image" -ec '
+            for module in \
+                ngx_http_zstd_filter_module.so \
+                ngx_http_zstd_static_module.so \
+                ngx_http_js_module.so \
+                ngx_stream_js_module.so \
+                ngx_http_geoip2_module.so \
+                ngx_stream_geoip2_module.so \
+                ngx_http_vhost_traffic_status_module.so; do
+                test -f "/usr/lib/nginx/modules/$module"
+                grep -Fq "load_module /usr/lib/nginx/modules/$module;" \
+                    /etc/nginx/modules-enabled/*.conf
+                echo "optional module loaded: $module"
+            done
+        ' | tee "$ARTIFACT_DIR/optional-modules-all.txt"
+    fi
+
     docker image inspect "$image" \
         >"$ARTIFACT_DIR/image-inspect-$flavor.json"
 
