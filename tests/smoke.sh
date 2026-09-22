@@ -80,10 +80,12 @@ for module in \
     fi
 done
 
-case "$nginx_v" in
-    *--with-http_v3_module*) pass "built with http_v3_module" ;;
-    *) bad "http_v3_module missing from nginx -V" ;;
-esac
+for feature in --with-http_ssl_module --with-http_v2_module --with-http_v3_module; do
+    case "$nginx_v" in
+        *"$feature"*) pass "nginx -V contains $feature" ;;
+        *) bad "$feature missing from nginx -V" ;;
+    esac
+done
 # The QUIC API nginx compiles against is chosen from the OpenSSL headers:
 # below 3.5.1 it silently downgrades to the slower compat shim.
 case "$nginx_v" in
@@ -91,11 +93,39 @@ case "$nginx_v" in
     *) bad "expected OpenSSL >= 3.5 for the native QUIC server API: $(echo "$nginx_v" | grep -i 'built with' || true)" ;;
 esac
 
-echo "==> listeners"
+echo "==> listeners and protocol config"
+runtime_config=$(docker exec "$NAME" nginx -T 2>&1)
+for expected in "http2       on;" "listen      443 quic" "ssl_protocols              TLSv1.2 TLSv1.3;" "brotli            on;"; do
+    if grep -Fq "$expected" <<<"$runtime_config"; then
+        pass "nginx -T contains: $expected"
+    else
+        bad "nginx -T missing: $expected"
+    fi
+done
+
 if docker exec "$NAME" netstat -lun 2>/dev/null | grep -q ':443'; then
     pass "QUIC/UDP :443 bound"
 else
     bad "no UDP listener on :443 — HTTP/3 would be advertised but dead"
+fi
+
+for tls_flag in -tls1_2 -tls1_3; do
+    if docker exec "$NAME" sh -c "printf '\n' | timeout 5 openssl s_client $tls_flag -connect 127.0.0.1:443 -servername localhost >/dev/null 2>&1"; then
+        pass "TLS handshake succeeds with $tls_flag"
+    else
+        bad "TLS handshake failed with $tls_flag"
+    fi
+done
+
+if docker exec "$NAME" openssl s_client -help 2>&1 | grep -q -- '-quic'; then
+    quic_handshake=$(docker exec "$NAME" sh -c "printf '\n' | timeout 5 openssl s_client -quic -connect 127.0.0.1:443 -servername localhost -alpn h3 2>&1 || true")
+    if grep -q 'ALPN protocol: h3' <<<"$quic_handshake"; then
+        pass "HTTP/3 QUIC handshake negotiates h3 via ALPN"
+    else
+        bad "QUIC listener did not negotiate h3 via ALPN"
+    fi
+else
+    bad "OpenSSL 3.5 s_client lacks -quic support"
 fi
 
 echo "==> plain HTTP"
@@ -150,11 +180,19 @@ sleep 1
 
 fetch_test_headers() {
     path="$1"
-    # OpenSSL 3 may return non-zero on a clean peer EOF even after emitting the
-    # complete HTTP response. Preserve the response bytes and do not let that
-    # transport-level EOF abort the smoke script under pipefail.
-    docker exec "$NAME" sh -c "printf 'HEAD $path HTTP/1.1\r\nHost: header-overrides.test\r\nConnection: close\r\n\r\n' | openssl s_client -quiet -connect 127.0.0.1:8444 -servername header-overrides.test 2>/dev/null || true" \
-      | tr -d '\r' | sed -n '1,/^$/p'
+    extra_header="${2:-}"
+    # Keep request construction on the host so arbitrary header values are not
+    # interpolated into a container shell command.
+    {
+        printf 'GET %s HTTP/1.1\r\nHost: header-overrides.test\r\n' "$path"
+        [ -n "$extra_header" ] && printf '%s\r\n' "$extra_header"
+        printf 'Connection: close\r\n\r\n'
+    } | {
+        # OpenSSL 3 may return non-zero on a clean peer EOF even after emitting
+        # the complete HTTP response. Preserve those response bytes.
+        docker exec -i "$NAME" openssl s_client -quiet \
+          -connect 127.0.0.1:8444 -servername header-overrides.test 2>/dev/null || true
+    } | tr -d '\r' | sed -n '1,/^$/p'
 }
 
 normal_hdrs=$(fetch_test_headers /normal)
@@ -203,6 +241,49 @@ for h in strict-transport-security x-content-type-options x-frame-options \
         bad "popup auth lost $h"
     fi
 done
+
+brotli_hdrs=$(fetch_test_headers /brotli "Accept-Encoding: br")
+if grep -qi '^Content-Encoding: br
+# Under Docker's default capability set the answer must be "off". Getting this
+# wrong is not a subtle bug: nginx refuses to start when quic_bpf is set
+# without CAP_BPF/CAP_NET_ADMIN, so a false positive here bricks every
+# container that does not opt in. (The container being healthy above already
+# proves nginx started, which is half the assertion.)
+bpf=$(docker exec "$NAME" cat /etc/nginx/quic-bpf.conf)
+if grep -q '^quic_bpf on;' <<<"$bpf"; then
+    bad "quic_bpf enabled without the capabilities for it"
+else
+    pass "quic_bpf correctly off under default capabilities"
+fi
+
+echo "==> no startup warnings"
+# ssl_stapling used to emit one of these per certificate on every boot.
+if docker logs "$NAME" 2>&1 | grep -qi '\[warn\]'; then
+    bad "startup emits warnings: $(docker logs "$NAME" 2>&1 | grep -i '\[warn\]' | head -1)"
+else
+    pass "clean startup, no warnings"
+fi
+
+echo "==> resolver"
+resolver=$(docker exec "$NAME" cat /etc/nginx/resolver.conf)
+if grep -q '^resolver .*127\.0\.0\.11' <<<"$resolver"; then
+    pass "resolver picked up Docker embedded DNS"
+else
+    bad "resolver not generated from /etc/resolv.conf: $resolver"
+fi
+
+echo
+if [ "$fail" -eq 0 ]; then
+    echo "all smoke checks passed"
+else
+    echo "smoke checks FAILED"
+fi
+exit "$fail"
+ <<<"$brotli_hdrs"; then
+    pass "Brotli filter compresses eligible response"
+else
+    bad "Brotli response missing Content-Encoding: br"
+fi
 
 echo "==> quic_bpf capability detection"
 # Under Docker's default capability set the answer must be "off". Getting this
