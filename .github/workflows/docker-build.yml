@@ -1,11 +1,10 @@
 name: Docker Build
 
+# CI is release-only. Development branches, normal main pushes and PRs must
+# be validated locally; a tag is the explicit act that spends CI and publishes.
 on:
   push:
-    branches: [main, master]
     tags: ['*']
-  pull_request:
-    branches: [main, master]
 
 env:
   IMAGE: hsxk/nginx
