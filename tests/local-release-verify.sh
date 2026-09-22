@@ -163,6 +163,8 @@ build_and_verify() {
         openssl version
         printf "Alpine "
         cat /etc/alpine-release
+        echo "runtime packages:"
+        apk info -v openssl pcre2 zlib brotli-libs 2>/dev/null | sort
         echo "modules:"
         find /usr/lib/nginx/modules -maxdepth 1 -type f -name "*.so" -print | sort
         echo "load_module config:"
