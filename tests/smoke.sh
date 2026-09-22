@@ -13,7 +13,8 @@
 set -euo pipefail
 
 IMAGE="${1:?usage: smoke.sh <image>}"
-NAME="nginx-smoke-$$"
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+NAME="nginx-smoke-$"
 NET="nginx-smoke-net-$$"
 HTTP_PORT="${HTTP_PORT:-18080}"
 TLS_PORT="${TLS_PORT:-18443}"
@@ -56,7 +57,29 @@ done
 check "container reports healthy" "$status" "healthy"
 
 echo "==> build features"
-nginx_v=$(docker run --rm "$IMAGE" nginx -V 2>&1)
+nginx_v=$(docker run --rm --entrypoint nginx "$IMAGE" -V 2>&1)
+runtime_version=$(docker run --rm --entrypoint sh "$IMAGE" -c 'printf "%s" "$NGINX_VERSION"')
+binary_version=$(docker run --rm --entrypoint nginx "$IMAGE" -v 2>&1 | sed 's#^nginx version: nginx/##')
+check "runtime nginx -v matches NGINX_VERSION" "$binary_version" "$runtime_version"
+
+if docker run --rm --entrypoint nginx "$IMAGE" -t >/dev/null 2>&1; then
+    pass "nginx -t"
+else
+    bad "nginx -t failed"
+fi
+
+for module in \
+    ngx_http_headers_more_filter_module.so \
+    ngx_http_brotli_filter_module.so \
+    ngx_http_brotli_static_module.so \
+    ngx_http_cache_purge_module.so; do
+    if docker run --rm --entrypoint sh "$IMAGE" -c "test -f /usr/lib/nginx/modules/$module"; then
+        pass "dynamic module present: $module"
+    else
+        bad "dynamic module missing: $module"
+    fi
+done
+
 case "$nginx_v" in
     *--with-http_v3_module*) pass "built with http_v3_module" ;;
     *) bad "http_v3_module missing from nginx -V" ;;
@@ -104,7 +127,7 @@ fi
 # inherited security-header set for the vhost.
 tls_hdrs=$(curl -sSkI "https://127.0.0.1:${TLS_PORT}/")
 for h in strict-transport-security x-content-type-options x-frame-options \
-         referrer-policy cross-origin-opener-policy alt-svc; do
+         referrer-policy permissions-policy cross-origin-opener-policy alt-svc; do
     if grep -qi "^${h}:" <<<"$tls_hdrs"; then
         pass "header $h present alongside Alt-Svc"
     else
@@ -115,6 +138,60 @@ done
 # Content-Type must appear exactly once (add_header would have duplicated it).
 ct=$(grep -ci '^content-type:' <<<"$(curl -sSI "http://127.0.0.1:${HTTP_PORT}/healthz")" || true)
 check "healthz has a single Content-Type" "$ct" "1"
+
+echo "==> security-header overrides"
+docker cp "$ROOT/tests/header-overrides.conf" "$NAME:/etc/nginx/conf.d/90-header-overrides-test.conf" >/dev/null
+if docker exec "$NAME" nginx -t >/dev/null 2>&1 && docker exec "$NAME" nginx -s reload >/dev/null 2>&1; then
+    pass "header override fixture loads and nginx -t passes"
+else
+    bad "header override fixture failed nginx -t/reload"
+fi
+sleep 1
+
+fetch_test_headers() {
+    path="$1"
+    docker exec "$NAME" sh -c "printf 'HEAD $path HTTP/1.1\r\nHost: header-overrides.test\r\nConnection: close\r\n\r\n' | openssl s_client -quiet -connect 127.0.0.1:8444 -servername header-overrides.test 2>/dev/null" \
+      | tr -d '\r' | sed -n '1,/^$/p'
+}
+
+normal_hdrs=$(fetch_test_headers /normal)
+normal_xfo_count=$(grep -ci '^X-Frame-Options:' <<<"$normal_hdrs" || true)
+check "normal path has exactly one X-Frame-Options" "$normal_xfo_count" "1"
+normal_xfo=$(awk -F': *' 'tolower($1)=="x-frame-options"{print $2}' <<<"$normal_hdrs")
+check "normal path X-Frame-Options value" "$normal_xfo" "SAMEORIGIN"
+
+for office_path in /office /office/child /office-addin /office-addin/child; do
+    office_hdrs=$(fetch_test_headers "$office_path")
+    office_xfo_count=$(grep -ci '^X-Frame-Options:' <<<"$office_hdrs" || true)
+    check "$office_path has no X-Frame-Options" "$office_xfo_count" "0"
+    if grep -qi "^Content-Security-Policy: .*frame-ancestors .*officeapps\.live\.com" <<<"$office_hdrs"; then
+        pass "$office_path keeps CSP frame-ancestors"
+    else
+        bad "$office_path missing CSP frame-ancestors"
+    fi
+    for h in strict-transport-security x-content-type-options referrer-policy \
+             permissions-policy cross-origin-opener-policy; do
+        if grep -qi "^$h:" <<<"$office_hdrs"; then
+            pass "$office_path keeps $h"
+        else
+            bad "$office_path lost $h"
+        fi
+    done
+done
+
+custom_hdrs=$(fetch_test_headers /custom)
+custom_xfo_count=$(grep -ci '^X-Frame-Options:' <<<"$custom_hdrs" || true)
+check "custom override has one X-Frame-Options" "$custom_xfo_count" "1"
+custom_xfo=$(awk -F': *' 'tolower($1)=="x-frame-options"{print $2}' <<<"$custom_hdrs")
+check "custom override replaces value" "$custom_xfo" "DENY"
+
+oauth_hdrs=$(fetch_test_headers /oauth-popup)
+oauth_coop_count=$(grep -ci '^Cross-Origin-Opener-Policy:' <<<"$oauth_hdrs" || true)
+check "popup auth has one COOP header" "$oauth_coop_count" "1"
+oauth_coop=$(awk -F': *' 'tolower($1)=="cross-origin-opener-policy"{print $2}' <<<"$oauth_hdrs")
+check "popup auth COOP override" "$oauth_coop" "same-origin-allow-popups"
+oauth_xfo_count=$(grep -ci '^X-Frame-Options:' <<<"$oauth_hdrs" || true)
+check "popup auth keeps one X-Frame-Options" "$oauth_xfo_count" "1"
 
 echo "==> quic_bpf capability detection"
 # Under Docker's default capability set the answer must be "off". Getting this
