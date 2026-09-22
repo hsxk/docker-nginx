@@ -45,6 +45,11 @@ RUN set -eux; \
 # tarball checksum must be updated together with NGINX_VERSION.
 ARG NGINX_SHA256=974ed5298a5e398e008704ed5db284e655fc270c596493dbccada452448fc9f1
 
+# Keep build-time headers and runtime libssl/libcrypto on the same Alpine
+# package revision. Alpine 3.24 currently ships OpenSSL 3.5.8-r0 on the release
+# architectures used here (amd64/arm64).
+ARG OPENSSL_PACKAGE_VERSION=3.5.8-r0
+
 ARG HEADERS_MORE_VERSION=0.40
 ARG HEADERS_MORE_SHA256=c14cb5e6c998590c209efbf77bd7637ce2cab02332e4192756a8af5b26ba4284
 
@@ -105,7 +110,7 @@ RUN apk add --no-cache --virtual .build \
       build-base git \
       ca-certificates curl \
       linux-headers \
-      pcre2-dev zlib-dev brotli-dev openssl-dev \
+      pcre2-dev zlib-dev brotli-dev "openssl-dev=${OPENSSL_PACKAGE_VERSION}" \
       libmaxminddb-dev
 
 WORKDIR /tmp/build
@@ -271,6 +276,7 @@ RUN set -eux; \
 # ─────────────────────────────────────────────────────────────────────────────
 FROM ${NGINX_FROM_IMAGE}@${NGINX_FROM_DIGEST}
 ARG NGINX_VERSION
+ARG OPENSSL_PACKAGE_VERSION=3.5.8-r0
 
 RUN set -eux; \
     image_version="$(nginx -v 2>&1 | sed 's#^nginx version: nginx/##')"; \
@@ -294,7 +300,8 @@ RUN set -eux; \
     # against) and gives the entrypoint the CLI it needs to mint the fallback
     # self-signed cert. No curl: busybox wget covers the HEALTHCHECK.
     apk add --no-cache \
-      ca-certificates tzdata pcre2 zlib brotli-libs openssl; \
+      ca-certificates tzdata pcre2 zlib brotli-libs "openssl=${OPENSSL_PACKAGE_VERSION}"; \
+    test "$(openssl version | awk '{print $2}')" = "3.5.8"; \
     if [ "${ENABLE_ZSTD}"    = "1" ]; then apk add --no-cache zstd-libs; fi; \
     if [ "${ENABLE_GEOIP2}"  = "1" ]; then apk add --no-cache libmaxminddb; fi; \
     if [ "${ENABLE_NJS_XML}" = "1" ]; then apk add --no-cache libxml2 libxslt; fi; \
