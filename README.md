@@ -123,6 +123,11 @@ Office parent origins vary by host and deployment (Excel/Outlook/SharePoint,
 web vs. desktop), so determine the real ancestor origins for the add-in you
 ship and allow only those. The base image intentionally does **not** guess them.
 
+If that site already emits a Content-Security-Policy, do not add a second CSP
+header just for Office. Merge `frame-ancestors` into the site's existing
+complete policy. Keeping one authoritative CSP makes review and debugging much
+easier and avoids depending on subtle interactions between multiple policies.
+
 For popup-based identity flows that need `window.opener` communication:
 
 ```nginx
@@ -141,6 +146,13 @@ location = /login {
 
 Do not keep an old `add_header X-Frame-Options ...` beside these snippets:
 remove it first, otherwise the old header family can still append a second XFO.
+
+The popup-auth snippet changes **only COOP**. It does not invent a global CSP or
+Google allow-list. If a site's own CSP blocks Google Identity resources or
+connections, change that site's CSP where it is owned. Likewise this base image
+does not globally set COEP or Cross-Origin-Resource-Policy: those policies are
+application-specific and can break OAuth, embedded widgets, fonts, images or
+other deliberate cross-origin integrations when imposed on every vhost.
 
 **HSTS lost `includeSubDomains`.** If you were relying on it, set it explicitly
 per site. Browsers that already cached the old directive keep honouring it until
@@ -446,6 +458,11 @@ the later one win.
   login route when that route is the sole opener. This avoids cutting the
   opener communication used by popup-based Google Identity flows while keeping
   the stricter default everywhere else.
+* **CSP / COEP / CORP stay application-owned.** The base image deliberately
+  does not invent a global CSP, Cross-Origin-Embedder-Policy, or
+  Cross-Origin-Resource-Policy. Those headers need knowledge of each
+  application's scripts, frames, fonts, OAuth flows and asset-sharing model.
+  The framing and popup-auth snippets change only XFO or COOP respectively.
 * **HSTS is scoped to HTTPS and omits `includeSubDomains`.** A `map` on
   `$https` means the header never goes out over plaintext. `includeSubDomains`
   is a one-way door — it takes down every subdomain that is not HTTPS, for the
