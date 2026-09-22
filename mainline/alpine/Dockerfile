@@ -211,6 +211,8 @@ RUN set -eux; \
     [ "${ENABLE_GEOIP2}" = "1" ] && EXTRA_MODULES="$EXTRA_MODULES --add-dynamic-module=./extensions/geoip2"; \
     [ "${ENABLE_VTS}"    = "1" ] && EXTRA_MODULES="$EXTRA_MODULES --add-dynamic-module=./extensions/vts"; \
     \
+    rm -rf /usr/lib/nginx/modules; \
+    mkdir -p /usr/lib/nginx/modules; \
     ./configure \
       --prefix=/etc/nginx \
       --sbin-path=/usr/sbin/nginx \
@@ -305,7 +307,14 @@ RUN set -eux; \
     if [ "${ENABLE_ZSTD}"    = "1" ]; then apk add --no-cache zstd-libs; fi; \
     if [ "${ENABLE_GEOIP2}"  = "1" ]; then apk add --no-cache libmaxminddb; fi; \
     if [ "${ENABLE_NJS_XML}" = "1" ]; then apk add --no-cache libxml2 libxslt; fi; \
-    mkdir -p /etc/nginx/snippets /etc/nginx/conf.d /etc/nginx/http.d \
+    # The official nginx base carries its own default vhost. This image has a
+    # different fallback/entrypoint contract, so never let that config leak in.
+    rm -f /etc/nginx/conf.d/*.conf; \
+    # Likewise, load only modules compiled in the builder above. Stale modules
+    # from the official package could have a different module signature.
+    rm -rf /usr/lib/nginx/modules /etc/nginx/modules-enabled; \
+    mkdir -p /usr/lib/nginx/modules /etc/nginx/modules-enabled \
+             /etc/nginx/snippets /etc/nginx/conf.d /etc/nginx/http.d \
              /usr/share/nginx-defaults \
              /var/cache/nginx /var/log/nginx /var/www/html /etc/letsencrypt; \
     chown -R nginx:nginx /var/cache/nginx /var/log/nginx /var/www/html; \
