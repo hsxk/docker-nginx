@@ -201,6 +201,11 @@ RUN set -eux; \
     rm -f /tmp/ossl-quic-check.c
 
 # ─── Configure & build nginx ────────────────────────────────────────────────
+# Keep DAV/MP4/FLV because the official nginx image ships them and dropping
+# them would be a silent migration regression:
+#   dav  WebDAV PUT/DELETE/MKCOL/COPY/MOVE
+#   mp4  ?start= pseudo-streaming (plain Range seeking works without it)
+#   flv  ?start= for the legacy FLV container
 RUN set -eux; \
     cd "/tmp/build/nginx-${NGINX_VERSION}"; \
     \
@@ -247,12 +252,6 @@ RUN set -eux; \
       --with-http_secure_link_module \
       --with-http_slice_module \
       --with-http_stub_status_module \
-      # Present in the official nginx image, so their absence here would be a
-      # silent regression for anyone migrating. All three are core modules with
-      # no external dependencies — they cost bytes, not attack surface.
-      #   dav  WebDAV PUT/DELETE/MKCOL/COPY/MOVE
-      #   mp4  ?start= pseudo-streaming (plain Range seeking works without it)
-      #   flv  ?start= for the legacy FLV container
       --with-http_dav_module \
       --with-http_mp4_module \
       --with-http_flv_module \
@@ -304,34 +303,27 @@ ARG ENABLE_ZSTD=0
 ARG ENABLE_GEOIP2=0
 ARG ENABLE_NJS_XML=0
 
+# Runtime image setup.
+# - nginx user/group already come from the pinned official base.
+# - Install only runtime libraries; njs XML libs remain opt-in.
+# - Remove the official image's default vhost so our fallback contract wins.
+# - Remove any packaged dynamic modules so only modules built above are loaded.
+# - Keep logs on stdout/stderr; do not declare a VOLUME that would shadow them.
 RUN set -eux; \
-    # nginx user/group already come from the pinned official base image. \
     test "$(id -u nginx)" = "101"; \
-    # Runtime libs only. No libxslt (we don't build xslt module).
-    # `openssl` brings in libssl3/libcrypto3 (which the nginx binary links
-    # against) and gives the entrypoint the CLI it needs to mint the fallback
-    # self-signed cert. No curl: busybox wget covers the HEALTHCHECK.
     apk add --no-cache \
       ca-certificates tzdata pcre2 zlib brotli-libs "openssl=${OPENSSL_PACKAGE_VERSION}"; \
     test "$(openssl version | awk '{print $2}')" = "3.5.8"; \
     if [ "${ENABLE_ZSTD}"    = "1" ]; then apk add --no-cache zstd-libs; fi; \
     if [ "${ENABLE_GEOIP2}"  = "1" ]; then apk add --no-cache libmaxminddb; fi; \
     if [ "${ENABLE_NJS_XML}" = "1" ]; then apk add --no-cache libxml2 libxslt; fi; \
-    # The official nginx base carries its own default vhost. This image has a
-    # different fallback/entrypoint contract, so never let that config leak in.
     rm -f /etc/nginx/conf.d/*.conf; \
-    # Likewise, load only modules compiled in the builder above. Stale modules
-    # from the official package could have a different module signature.
     rm -rf /usr/lib/nginx/modules /etc/nginx/modules-enabled; \
     mkdir -p /usr/lib/nginx/modules /etc/nginx/modules-enabled \
              /etc/nginx/snippets /etc/nginx/conf.d /etc/nginx/http.d \
              /usr/share/nginx-defaults \
              /var/cache/nginx /var/log/nginx /var/www/html /etc/letsencrypt; \
     chown -R nginx:nginx /var/cache/nginx /var/log/nginx /var/www/html; \
-    # Container best-practice: stream nginx logs to docker's stdout/stderr.
-    # NOTE: deliberately no `VOLUME /var/log/nginx` — declaring one would spawn
-    # an anonymous volume on every `docker run` that shadows these symlinks and
-    # silently diverts logs to disk instead of `docker logs`.
     ln -sf /dev/stdout /var/log/nginx/access.log; \
     ln -sf /dev/stderr /var/log/nginx/error.log
 
