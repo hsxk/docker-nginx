@@ -278,6 +278,8 @@ RUN set -eux; \
 # ─────────────────────────────────────────────────────────────────────────────
 FROM ${NGINX_FROM_IMAGE}@${NGINX_FROM_DIGEST}
 ARG NGINX_VERSION
+ARG NGINX_FROM_IMAGE
+ARG NGINX_FROM_DIGEST
 ARG OPENSSL_PACKAGE_VERSION=3.5.8-r0
 
 RUN set -eux; \
@@ -287,6 +289,9 @@ RUN set -eux; \
 LABEL org.opencontainers.image.title="docker-nginx-quic" \
       org.opencontainers.image.description="NGINX with HTTP/3 (OpenSSL 3.5), Brotli, headers-more, cache-purge" \
       org.opencontainers.image.source="https://github.com/hsxk/docker-nginx" \
+      org.opencontainers.image.version="${NGINX_VERSION}" \
+      org.opencontainers.image.base.name="${NGINX_FROM_IMAGE}" \
+      org.opencontainers.image.base.digest="${NGINX_FROM_DIGEST}" \
       org.opencontainers.image.licenses="GPL-3.0-or-later"
 
 # Optional-module runtime deps need re-declaring here (ARGs reset across stages).
