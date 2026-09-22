@@ -150,7 +150,10 @@ sleep 1
 
 fetch_test_headers() {
     path="$1"
-    docker exec "$NAME" sh -c "printf 'HEAD $path HTTP/1.1\r\nHost: header-overrides.test\r\nConnection: close\r\n\r\n' | openssl s_client -quiet -connect 127.0.0.1:8444 -servername header-overrides.test 2>/dev/null" \
+    # OpenSSL 3 may return non-zero on a clean peer EOF even after emitting the
+    # complete HTTP response. Preserve the response bytes and do not let that
+    # transport-level EOF abort the smoke script under pipefail.
+    docker exec "$NAME" sh -c "printf 'HEAD $path HTTP/1.1\r\nHost: header-overrides.test\r\nConnection: close\r\n\r\n' | openssl s_client -quiet -connect 127.0.0.1:8444 -servername header-overrides.test 2>/dev/null || true" \
       | tr -d '\r' | sed -n '1,/^$/p'
 }
 
