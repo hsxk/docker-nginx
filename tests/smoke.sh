@@ -5,7 +5,7 @@
 #
 # This is intentionally runtime-heavy. nginx -t only proves syntax; this also
 # checks the shipped fallback vhost, protocol listeners, TLS handshakes,
-# compression, module loading, and security-header override behaviour.
+# compression, module loading, and application-owned header behaviour.
 
 set -euo pipefail
 
@@ -190,25 +190,68 @@ else
     bad "HTTP/2 not negotiated"
 fi
 
-tls_hdrs=$(curl --noproxy '*' -sSkI "https://127.0.0.1:${TLS_PORT}/")
-for h in strict-transport-security x-content-type-options x-frame-options \
-         referrer-policy permissions-policy cross-origin-opener-policy alt-svc; do
-    if grep -qi "^${h}:" <<<"$tls_hdrs"; then
-        pass "header $h present alongside Alt-Svc"
-    else
-        bad "header $h missing"
-    fi
-done
+policy_headers=(
+    strict-transport-security
+    x-content-type-options
+    x-frame-options
+    referrer-policy
+    permissions-policy
+    cross-origin-opener-policy
+    cross-origin-resource-policy
+    cross-origin-embedder-policy
+    content-security-policy
+)
 
-default_xfo_count=$(grep -ci '^x-frame-options:' <<<"$tls_hdrs" || true)
-check "default response has exactly one X-Frame-Options" "$default_xfo_count" "1"
-default_xfo=$(awk -F': *' 'tolower($1)=="x-frame-options"{gsub("\r","",$2); print $2}' <<<"$tls_hdrs")
-check "default X-Frame-Options value" "$default_xfo" "SAMEORIGIN"
+assert_policy_headers_absent() {
+    label="$1"
+    headers="$2"
+    for h in "${policy_headers[@]}"; do
+        count=$(grep -ci "^${h}:" <<<"$headers" || true)
+        check "$label has no $h" "$count" "0"
+    done
+}
+
+check_one_header() {
+    label="$1"
+    header="$2"
+    headers="$3"
+    count=$(grep -ci "^${header}:" <<<"$headers" || true)
+    check "$label" "$count" "1"
+}
+
+header_value() {
+    header="$1"
+    headers="$2"
+    awk -F': *' -v wanted="$header" '
+        tolower($1) == tolower(wanted) {
+            gsub("\r", "", $2)
+            print $2
+        }
+    ' <<<"$headers"
+}
+
+# Bare image acceptance: HTTP/3 may advertise Alt-Svc, but the base image must
+# not invent any application/browser security policy.
+tls_hdrs=$(curl --noproxy '*' -sSkI "https://127.0.0.1:${TLS_PORT}/")
+assert_policy_headers_absent "bare image" "$tls_hdrs"
+if grep -qi '^alt-svc:' <<<"$tls_hdrs"; then
+    pass "HTTP/3 Alt-Svc remains present"
+else
+    bad "HTTP/3 Alt-Svc missing"
+fi
+
+# nginx -T is part of the acceptance contract: the opt-in security policy file
+# may exist on disk, but it must not be in the active include graph.
+if grep -Fq 'include /etc/nginx/snippets/security-headers.conf;' <<<"$runtime_config"; then
+    bad "nginx -T shows automatic security-headers.conf loading"
+else
+    pass "nginx -T does not load security-headers.conf"
+fi
 
 ct=$(grep -ci '^content-type:' <<<"$(curl --noproxy '*' -sSI "http://127.0.0.1:${HTTP_PORT}/healthz")" || true)
 check "healthz has a single Content-Type" "$ct" "1"
 
-echo "==> security-header overrides and cache-purge fixture"
+echo "==> application-owned header policy and cache-purge fixture"
 docker cp "$ROOT/tests/cache-purge-http.conf" \
     "$NAME:/etc/nginx/http.d/90-cache-purge-test.conf" >/dev/null
 if [ "$has_zstd" -eq 1 ]; then
@@ -216,13 +259,13 @@ if [ "$has_zstd" -eq 1 ]; then
         "$NAME:/etc/nginx/http.d/91-zstd-test.conf" >/dev/null
 fi
 docker cp "$ROOT/tests/header-overrides.conf" \
-    "$NAME:/etc/nginx/conf.d/90-header-overrides-test.conf" >/dev/null
+    "$NAME:/etc/nginx/conf.d/90-header-policy-test.conf" >/dev/null
 
 if docker exec "$NAME" nginx -t >/dev/null 2>&1 && \
    docker exec "$NAME" nginx -s reload >/dev/null 2>&1; then
-    pass "header override fixture loads and nginx -t passes"
+    pass "application header fixture loads and nginx -t passes"
 else
-    bad "header override fixture failed nginx -t/reload"
+    bad "application header fixture failed nginx -t/reload"
 fi
 sleep 1
 
@@ -243,75 +286,69 @@ fetch_host_headers() {
 }
 
 fetch_test_headers() {
-    fetch_host_headers header-overrides.test "$1" "${2:-}"
+    fetch_host_headers header-policy.test "$1" "${2:-}"
 }
 
-check_one_header() {
-    label="$1"
-    header="$2"
-    headers="$3"
-    count=$(grep -ci "^${header}:" <<<"$headers" || true)
-    check "$label" "$count" "1"
-}
+# A plain downstream site is just as neutral as the baked fallback vhost.
+plain_hdrs=$(fetch_test_headers /plain)
+assert_policy_headers_absent "plain application path" "$plain_hdrs"
 
-normal_hdrs=$(fetch_test_headers /normal)
-normal_xfo_count=$(grep -ci '^x-frame-options:' <<<"$normal_hdrs" || true)
-check "normal path has exactly one X-Frame-Options" "$normal_xfo_count" "1"
-normal_xfo=$(awk -F': *' 'tolower($1)=="x-frame-options"{gsub("\r","",$2); print $2}' <<<"$normal_hdrs")
-check "normal path X-Frame-Options value" "$normal_xfo" "SAMEORIGIN"
-for h in strict-transport-security x-content-type-options referrer-policy \
-         permissions-policy cross-origin-opener-policy; do
-    check_one_header "normal path has exactly one $h" "$h" "$normal_hdrs"
+# Native add_header is now safe from base-image duplication because the base
+# image does not set the same policy header at all.
+add_hdrs=$(fetch_test_headers /add-header)
+check_one_header "add_header emits one Referrer-Policy" "referrer-policy" "$add_hdrs"
+check "add_header value is application-owned" \
+    "$(header_value referrer-policy "$add_hdrs")" "no-referrer"
+for h in "${policy_headers[@]}"; do
+    [ "$h" = referrer-policy ] && continue
+    count=$(grep -ci "^${h}:" <<<"$add_hdrs" || true)
+    check "add_header path has no unrelated $h" "$count" "0"
 done
 
-for office_path in /office /office/child /office-addin /office-addin/child; do
-    office_hdrs=$(fetch_test_headers "$office_path")
-    office_xfo_count=$(grep -ci '^x-frame-options:' <<<"$office_hdrs" || true)
-    check "$office_path has no X-Frame-Options" "$office_xfo_count" "0"
-
-    if grep -qi '^content-security-policy: .*frame-ancestors .*office-parent\.example' <<<"$office_hdrs"; then
-        pass "$office_path keeps CSP frame-ancestors"
-    else
-        bad "$office_path missing CSP frame-ancestors"
-    fi
-    check_one_header "$office_path has exactly one Content-Security-Policy" \
-        "content-security-policy" "$office_hdrs"
-
-    for h in strict-transport-security x-content-type-options referrer-policy \
-             permissions-policy cross-origin-opener-policy; do
-        check_one_header "$office_path keeps exactly one $h" "$h" "$office_hdrs"
-    done
+# headers-more remains available without a base policy to fight.
+more_hdrs=$(fetch_test_headers /more-set)
+check_one_header "more_set_headers emits one Permissions-Policy" "permissions-policy" "$more_hdrs"
+check "more_set_headers value is application-owned" \
+    "$(header_value permissions-policy "$more_hdrs")" "geolocation=()"
+for h in "${policy_headers[@]}"; do
+    [ "$h" = permissions-policy ] && continue
+    count=$(grep -ci "^${h}:" <<<"$more_hdrs" || true)
+    check "more_set_headers path has no unrelated $h" "$count" "0"
 done
 
-custom_hdrs=$(fetch_test_headers /custom)
-custom_xfo_count=$(grep -ci '^x-frame-options:' <<<"$custom_hdrs" || true)
-check "custom override has one X-Frame-Options" "$custom_xfo_count" "1"
-custom_xfo=$(awk -F': *' 'tolower($1)=="x-frame-options"{gsub("\r","",$2); print $2}' <<<"$custom_hdrs")
-check "custom override replaces value" "$custom_xfo" "DENY"
-for h in strict-transport-security x-content-type-options referrer-policy \
-         permissions-policy cross-origin-opener-policy; do
-    check_one_header "custom XFO override keeps exactly one $h" "$h" "$custom_hdrs"
+# Office Add-in style route: COOP is explicitly unsafe-none, CSP belongs to the
+# application, and no X-Frame-Options is forced into an embeddable page.
+office_hdrs=$(fetch_test_headers /office-addin)
+check_one_header "Office path has one COOP" "cross-origin-opener-policy" "$office_hdrs"
+check "Office path COOP is unsafe-none" \
+    "$(header_value cross-origin-opener-policy "$office_hdrs")" "unsafe-none"
+check_one_header "Office path has one CSP" "content-security-policy" "$office_hdrs"
+if grep -qi '^content-security-policy: .*frame-ancestors .*office-parent\.example' <<<"$office_hdrs"; then
+    pass "Office path keeps application frame-ancestors"
+else
+    bad "Office path missing application frame-ancestors"
+fi
+office_xfo_count=$(grep -ci '^x-frame-options:' <<<"$office_hdrs" || true)
+check "Office path has no X-Frame-Options" "$office_xfo_count" "0"
+for h in strict-transport-security x-content-type-options referrer-policy permissions-policy \
+         cross-origin-resource-policy cross-origin-embedder-policy; do
+    count=$(grep -ci "^${h}:" <<<"$office_hdrs" || true)
+    check "Office path has no unrelated $h" "$count" "0"
 done
 
-oauth_hdrs=$(fetch_test_headers /oauth-popup)
-oauth_coop_count=$(grep -ci '^cross-origin-opener-policy:' <<<"$oauth_hdrs" || true)
-check "popup auth has one COOP header" "$oauth_coop_count" "1"
-oauth_coop=$(awk -F': *' 'tolower($1)=="cross-origin-opener-policy"{gsub("\r","",$2); print $2}' <<<"$oauth_hdrs")
-check "popup auth COOP override" "$oauth_coop" "same-origin-allow-popups"
-
-for h in strict-transport-security x-content-type-options x-frame-options \
-         referrer-policy permissions-policy; do
-    check_one_header "popup auth keeps exactly one $h" "$h" "$oauth_hdrs"
-done
-
-popup_server_hdrs=$(fetch_host_headers popup-server.test /)
-popup_server_coop_count=$(grep -ci '^cross-origin-opener-policy:' <<<"$popup_server_hdrs" || true)
-check "server-scope popup auth has one COOP header" "$popup_server_coop_count" "1"
-popup_server_coop=$(awk -F': *' 'tolower($1)=="cross-origin-opener-policy"{gsub("\r","",$2); print $2}' <<<"$popup_server_hdrs")
-check "server-scope popup auth COOP override" "$popup_server_coop" "same-origin-allow-popups"
-for h in strict-transport-security x-content-type-options x-frame-options \
-         referrer-policy permissions-policy; do
-    check_one_header "server-scope popup auth keeps exactly one $h" "$h" "$popup_server_hdrs"
+# Upstream-owned policy must pass through unchanged: one COOP, one XFO, no
+# base-image copy appended and no replacement value.
+upstream_hdrs=$(fetch_test_headers /upstream-policy)
+check_one_header "upstream COOP appears once" "cross-origin-opener-policy" "$upstream_hdrs"
+check "upstream COOP value is untouched" \
+    "$(header_value cross-origin-opener-policy "$upstream_hdrs")" "unsafe-none"
+check_one_header "upstream X-Frame-Options appears once" "x-frame-options" "$upstream_hdrs"
+check "upstream X-Frame-Options value is untouched" \
+    "$(header_value x-frame-options "$upstream_hdrs")" "SAMEORIGIN"
+for h in strict-transport-security x-content-type-options referrer-policy permissions-policy \
+         cross-origin-resource-policy cross-origin-embedder-policy content-security-policy; do
+    count=$(grep -ci "^${h}:" <<<"$upstream_hdrs" || true)
+    check "upstream path has no base-added $h" "$count" "0"
 done
 
 brotli_hdrs=$(fetch_test_headers /brotli "Accept-Encoding: br")
@@ -331,8 +368,8 @@ if [ "$has_zstd" -eq 1 ]; then
 fi
 
 echo "==> ngx_cache_purge functional test"
-cache_url="https://header-overrides.test:${HEADER_PORT}/cache-purge/item"
-cache_curl=(--noproxy '*' -sSk --resolve "header-overrides.test:${HEADER_PORT}:127.0.0.1")
+cache_url="https://header-policy.test:${HEADER_PORT}/cache-purge/item"
+cache_curl=(--noproxy '*' -sSk --resolve "header-policy.test:${HEADER_PORT}:127.0.0.1")
 
 cache_first=$(curl "${cache_curl[@]}" -D - -o /dev/null "$cache_url")
 if grep -qi '^x-cache-status: MISS' <<<"$cache_first"; then
