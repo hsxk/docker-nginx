@@ -17,7 +17,7 @@ any http-level config in `/etc/nginx/http.d/`.
 | OpenSSL                 | `3.5.8-r0`                                      | build + runtime package pinned      |
 | headers-more-nginx      | `0.40`                                           | tarball SHA256 verified            |
 | ngx_brotli              | `a71f9312c2deb28875acc7bacfdd5695a111aa53`    | google/ngx_brotli                  |
-| ngx_cache_purge         | `285354eddd5675c765ba2b79dac09f5d3065b22f`    | nginx-modules maintained fork      |
+| ngx_cache_purge         | `285354eddd5675c765ba2b79dac09f5d3065b22f`    | upstream lists tested through 1.29; this image runs a live purge smoke test |
 | zstd (optional)         | `057a7d339af1111d04b5a9ac5ae9b0250d17cd94`    | tokers/zstd-nginx-module           |
 | njs (optional)          | `1.0.1`                                          | security-fix release               |
 | GeoIP2 (optional)       | `3.4`                                            | SHA256-verified release            |
@@ -500,10 +500,19 @@ Git tag, push an image, log in to Docker Hub, or invoke GitHub Actions:
 bash ./tests/local-release-verify.sh
 ```
 
-It builds both `base` and `all` locally and writes reproducible evidence under
-`.artifacts/nginx-verify-<UTC timestamp>/`: plain build logs, `nginx -V`,
-`nginx -t`, runtime versions/module lists, smoke results, example validation,
-and Docker image metadata.
+Before building, it verifies that the moving official
+`NGINX_FROM_IMAGE` tag still resolves to the pinned immutable digest and
+downloads the NGINX source tarball again to verify `NGINX_SHA256`. It also
+rejects shipped configs that use `add_header` for security headers managed by
+headers-more.
+
+It then builds both `base` and `all` locally and writes reproducible evidence
+under `.artifacts/nginx-verify-<UTC timestamp>/`: plain build logs,
+`nginx -V`, `nginx -t`, runtime versions/module lists, smoke results,
+example validation, upstream-pin evidence, and Docker image metadata. The smoke
+suite includes a live ngx_cache_purge cycle (MISS → HIT → PURGE 200 → PURGE 412
+→ MISS), because that module's upstream compatibility table has not yet marked
+NGINX 1.31.x as tested.
 
 For a quicker single-image iteration:
 
