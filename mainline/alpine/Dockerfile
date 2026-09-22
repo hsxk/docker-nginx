@@ -102,9 +102,11 @@ ARG ENABLE_NJS_XML=0
 # vulnerable version is invisible to `apk`, to SBOM generators and to image
 # scanners, because there is no package to report.
 #
-# Linking against the distro's OpenSSL 3.5.x inverts all of that: a base-image
-# rebuild picks up Alpine's security updates, the version is in the SBOM, and
-# scanners can actually see it. nginx detects the native API automatically —
+# Linking against Alpine's packaged OpenSSL 3.5.x inverts the visibility
+# problem: the version is in the SBOM and scanners can see it. This image pins
+# both the official base digest and the OpenSSL package revision, so security
+# updates are deliberate bumps followed by a full local rebuild — never a
+# silent change underneath an unchanged tag. nginx detects the native API —
 # `./configure` probes for SSL_set_quic_tls_cbs() and enables HTTP/3 with it.
 RUN apk add --no-cache --virtual .build \
       build-base git \
