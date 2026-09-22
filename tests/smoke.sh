@@ -203,7 +203,9 @@ check "default X-Frame-Options value" "$default_xfo" "SAMEORIGIN"
 ct=$(grep -ci '^content-type:' <<<"$(curl --noproxy '*' -sSI "http://127.0.0.1:${HTTP_PORT}/healthz")" || true)
 check "healthz has a single Content-Type" "$ct" "1"
 
-echo "==> security-header overrides"
+echo "==> security-header overrides and cache-purge fixture"
+docker cp "$ROOT/tests/cache-purge-http.conf" \
+    "$NAME:/etc/nginx/http.d/90-cache-purge-test.conf" >/dev/null
 docker cp "$ROOT/tests/header-overrides.conf" \
     "$NAME:/etc/nginx/conf.d/90-header-overrides-test.conf" >/dev/null
 
@@ -302,6 +304,37 @@ if grep -qi '^content-encoding: br' <<<"$brotli_hdrs"; then
     pass "Brotli filter compresses eligible response"
 else
     bad "Brotli response missing Content-Encoding: br"
+fi
+
+echo "==> ngx_cache_purge functional test"
+cache_url="https://header-overrides.test:${HEADER_PORT}/cache-purge/item"
+cache_curl=(--noproxy '*' -sSk --resolve "header-overrides.test:${HEADER_PORT}:127.0.0.1")
+
+cache_first=$(curl "${cache_curl[@]}" -D - -o /dev/null "$cache_url")
+if grep -qi '^x-cache-status: MISS' <<<"$cache_first"; then
+    pass "cache purge fixture first GET is MISS"
+else
+    bad "cache purge fixture first GET was not MISS"
+fi
+
+cache_second=$(curl "${cache_curl[@]}" -D - -o /dev/null "$cache_url")
+if grep -qi '^x-cache-status: HIT' <<<"$cache_second"; then
+    pass "cache purge fixture second GET is HIT"
+else
+    bad "cache purge fixture second GET was not HIT"
+fi
+
+purge_code=$(curl "${cache_curl[@]}" -X PURGE -o /dev/null -w '%{http_code}' "$cache_url")
+check "ngx_cache_purge removes cached entry" "$purge_code" "200"
+
+purge_miss_code=$(curl "${cache_curl[@]}" -X PURGE -o /dev/null -w '%{http_code}' "$cache_url")
+check "second PURGE reports cache miss" "$purge_miss_code" "412"
+
+cache_after_purge=$(curl "${cache_curl[@]}" -D - -o /dev/null "$cache_url")
+if grep -qi '^x-cache-status: MISS' <<<"$cache_after_purge"; then
+    pass "GET after PURGE is MISS"
+else
+    bad "GET after PURGE did not return to MISS"
 fi
 
 echo "==> quic_bpf capability detection"
