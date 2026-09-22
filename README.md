@@ -22,6 +22,8 @@ any http-level config in `/etc/nginx/http.d/`.
 | njs (optional)          | `1.0.1`                                          | security-fix release               |
 | GeoIP2 (optional)       | `3.4`                                            | SHA256-verified release            |
 | VTS (optional)          | `0.2.7`                                          | SHA256-verified release            |
+| NGINX control API       | built in                                         | dormant unless nginx is started with a control socket |
+| NGINX HTTP JSON         | built in                                         | mainline `json_set` support       |
 
 ### Why the QUIC backend is plain OpenSSL now
 
@@ -69,6 +71,7 @@ What this image adds is the third-party module set and opinionated config:
 |---|---|---|
 | nginx / OpenSSL | 1.31.6 / 3.5.x | 1.31.6 / 3.5.8 |
 | HTTP/3 (QUIC) | yes | yes |
+| Control API / HTTP JSON | mainline-dependent | compiled in |
 | Brotli | — | `ngx_brotli` |
 | `headers-more` | — | yes |
 | cache purge | — | `ngx_cache_purge` |
@@ -225,6 +228,15 @@ Changing only the visible version therefore fails deliberately instead of
 quietly compiling modules for one NGINX while running another. If the Alpine
 base's OpenSSL revision changes, update `OPENSSL_PACKAGE_VERSION` in the same
 change and re-run the full local verification matrix.
+
+The custom binary is tagged at compile time as
+`nginx/<version> (docker-nginx-quic)`. The official base still contains Alpine
+package metadata for nginx, so **do not run `apk upgrade nginx` or
+`apk fix nginx` in a downstream image**: that can restore the package-owned
+binary over the source-built binary while leaving these third-party modules in
+place. The entrypoint checks the build marker and fails with a clear error if
+that happens. Upgrade nginx by bumping the pins above and rebuilding this image;
+site configs, snippets and other Alpine packages remain freely overridable.
 
 ## Quick start
 
