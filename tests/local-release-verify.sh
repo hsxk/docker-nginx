@@ -29,10 +29,18 @@ need() {
 }
 
 need docker
+need bash
+need curl
 need awk
 need sed
 need grep
 need tee
+
+# Fail before spending build time if a tracked test script is syntactically
+# broken. This caught a real regression while preparing the 1.31.6 upgrade.
+bash -n "$ROOT/tests/smoke.sh"
+bash -n "$ROOT/tests/validate-examples.sh"
+bash -n "$ROOT/tests/local-release-verify.sh"
 
 if ! docker info >/dev/null 2>&1; then
     echo "error: Docker daemon is not available" >&2
@@ -40,11 +48,12 @@ if ! docker info >/dev/null 2>&1; then
 fi
 
 NGINX_VERSION="$(sed -n 's/^ARG NGINX_VERSION=//p' "$DOCKERFILE" | head -n1)"
+NGINX_FROM_IMAGE="$(sed -n 's/^ARG NGINX_FROM_IMAGE=//p' "$DOCKERFILE" | head -n1)"
 NGINX_FROM_DIGEST="$(sed -n 's/^ARG NGINX_FROM_DIGEST=//p' "$DOCKERFILE" | head -n1)"
 NGINX_SHA256="$(sed -n 's/^ARG NGINX_SHA256=//p' "$DOCKERFILE" | head -n1)"
 OPENSSL_PACKAGE_VERSION="$(sed -n 's/^ARG OPENSSL_PACKAGE_VERSION=//p' "$DOCKERFILE" | head -n1)"
 
-for value_name in NGINX_VERSION NGINX_FROM_DIGEST NGINX_SHA256 OPENSSL_PACKAGE_VERSION; do
+for value_name in NGINX_VERSION NGINX_FROM_IMAGE NGINX_FROM_DIGEST NGINX_SHA256 OPENSSL_PACKAGE_VERSION; do
     value="${!value_name}"
     if [ -z "$value" ]; then
         echo "error: could not read $value_name from Dockerfile" >&2
@@ -54,6 +63,7 @@ done
 
 cat >"$ARTIFACT_DIR/pins.txt" <<EOF
 NGINX_VERSION=$NGINX_VERSION
+NGINX_FROM_IMAGE=$NGINX_FROM_IMAGE
 NGINX_FROM_DIGEST=$NGINX_FROM_DIGEST
 NGINX_SHA256=$NGINX_SHA256
 OPENSSL_PACKAGE_VERSION=$OPENSSL_PACKAGE_VERSION
@@ -68,8 +78,13 @@ build_and_verify() {
     image="$IMAGE_PREFIX:$NGINX_VERSION-$flavor"
 
     printf '\n===== BUILD %s =====\n' "$flavor"
+    build_flags=(--progress=plain)
+    if [ "${NO_CACHE:-1}" = "1" ]; then
+        build_flags+=(--no-cache)
+    fi
+
     docker build \
-        --progress=plain \
+        "${build_flags[@]}" \
         "$@" \
         -t "$image" \
         -f "$DOCKERFILE" \
@@ -115,11 +130,6 @@ build_and_verify all \
     --build-arg ENABLE_NJS=1 \
     --build-arg ENABLE_GEOIP2=1 \
     --build-arg ENABLE_VTS=1
-
-printf '\n===== STATIC SCRIPT SYNTAX =====\n'
-bash -n "$ROOT/tests/smoke.sh"
-bash -n "$ROOT/tests/validate-examples.sh"
-bash -n "$ROOT/tests/local-release-verify.sh"
 
 printf '\n===== RESULT =====\n'
 printf 'All local release checks passed for NGINX %s.\n' "$NGINX_VERSION"
