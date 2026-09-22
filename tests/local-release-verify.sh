@@ -98,6 +98,33 @@ if [ "$remote_digest" != "$NGINX_FROM_DIGEST" ]; then
 fi
 printf 'ok: official tag still resolves to %s\n' "$NGINX_FROM_DIGEST"
 
+source_tar="$ARTIFACT_DIR/nginx-$NGINX_VERSION.tar.gz"
+curl -fsSL "https://nginx.org/download/nginx-$NGINX_VERSION.tar.gz" -o "$source_tar"
+source_digest=$(sha256sum "$source_tar" | awk '{print $1}')
+printf '%s  nginx-%s.tar.gz\n' "$source_digest" "$NGINX_VERSION" \
+    >"$ARTIFACT_DIR/nginx-source-sha256.txt"
+if [ "$source_digest" != "$NGINX_SHA256" ]; then
+    echo "error: nginx source SHA256 mismatch" >&2
+    echo "  pinned:  $NGINX_SHA256" >&2
+    echo "  actual:  $source_digest" >&2
+    exit 1
+fi
+rm -f "$source_tar"
+printf 'ok: nginx source SHA256 matches %s\n' "$NGINX_SHA256"
+
+printf '\n===== SECURITY HEADER CONFIG LINT =====\n'
+managed_headers='Strict-Transport-Security|X-Content-Type-Options|X-Frame-Options|Referrer-Policy|Permissions-Policy|Cross-Origin-Opener-Policy'
+bad_header_lines=$(find "$ROOT/mainline/alpine/files" "$ROOT/examples" "$ROOT/tests" \
+    -type f -name '*.conf' -print0 \
+    | xargs -0 grep -nEi "^[[:space:]]*add_header[[:space:]]+($managed_headers)([[:space:];]|$)" \
+    || true)
+if [ -n "$bad_header_lines" ]; then
+    echo "error: managed security headers must use headers-more, not add_header:" >&2
+    printf '%s\n' "$bad_header_lines" >&2
+    exit 1
+fi
+echo "ok: no managed security header uses add_header in shipped configs"
+
 build_and_verify() {
     flavor="$1"
     shift
