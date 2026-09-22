@@ -22,8 +22,6 @@ any http-level config in `/etc/nginx/http.d/`.
 | njs (optional)          | `1.0.1`                                          | security-fix release               |
 | GeoIP2 (optional)       | `3.4`                                            | SHA256-verified release            |
 | VTS (optional)          | `0.2.7`                                          | SHA256-verified release            |
-| NGINX control API       | built in                                         | dormant unless nginx is started with a control socket |
-| NGINX HTTP JSON         | built in                                         | mainline `json_set` support       |
 
 ### Why the QUIC backend is plain OpenSSL now
 
@@ -71,7 +69,6 @@ What this image adds is the third-party module set and opinionated config:
 |---|---|---|
 | nginx / OpenSSL | 1.31.6 / 3.5.x | 1.31.6 / 3.5.8 |
 | HTTP/3 (QUIC) | yes | yes |
-| Control API / HTTP JSON | mainline-dependent | compiled in |
 | Brotli | — | `ngx_brotli` |
 | `headers-more` | — | yes |
 | cache purge | — | `ngx_cache_purge` |
