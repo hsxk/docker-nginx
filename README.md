@@ -96,16 +96,31 @@ routes, migrate those exceptions explicitly:
 ```nginx
 location ~ ^/(?:office|office-addin)(?:/|$) {
     include /etc/nginx/snippets/security-headers-allow-framing.conf;
-    more_set_headers "Content-Security-Policy: frame-ancestors 'self' https://*.officeapps.live.com https://*.office.com";
+    # Example only: replace with the actual parent origins that host your
+    # Office Add-in. Do not bake a generic Microsoft-domain allow-list into
+    # the base image.
+    more_set_headers "Content-Security-Policy: frame-ancestors 'self' https://office-parent.example";
 }
 ```
+
+Office parent origins vary by host and deployment (Excel/Outlook/SharePoint,
+web vs. desktop), so determine the real ancestor origins for the add-in you
+ship and allow only those. The base image intentionally does **not** guess them.
 
 For popup-based identity flows that need `window.opener` communication:
 
 ```nginx
+# Narrow route when every popup is launched from this page:
 location = /login {
     include /etc/nginx/snippets/security-headers-popup-auth.conf;
 }
+
+# Or at server scope when login can be started from many pages, which is common
+# for blogs / WordPress / account widgets:
+# server {
+#     include /etc/nginx/snippets/security-headers-popup-auth.conf;
+#     ...
+# }
 ```
 
 Do not keep an old `add_header X-Frame-Options ...` beside these snippets:
@@ -129,7 +144,7 @@ this is deliberate, since the old behaviour could replay one visitor's cookie to
 everyone. See `snippets/fastcgi-cache.conf` to opt back in knowingly.
 
 **`ENABLE_NJS=1` no longer builds njs's `xml` module.** Add `ENABLE_NJS_XML=1`
-if your njs scripts parse XML. njs itself also jumped 0.8.7 → 1.0.0; check your
+if your njs scripts parse XML. njs itself also jumped 0.8.7 → 1.0.1; check your
 scripts against its changelog.
 
 **`resolver` is derived from the container's DNS** instead of hardcoded public
@@ -391,9 +406,11 @@ the later one win.
   remains `Cross-Origin-Opener-Policy: same-origin`. For routes/sites using a
   cross-origin popup auth flow, include `security-headers-popup-auth.conf` to
   emit exactly one `same-origin-allow-popups` value while preserving every
-  other security header. This avoids the class of failures where Google
-  Identity Services opens a blank popup because window-to-window communication
-  was cut by an immutable global COOP policy.
+  other security header. Put it at `server {}` scope when a login popup can be
+  launched from many pages (a common blog/WordPress pattern), or only on the
+  login route when that route is the sole opener. This avoids cutting the
+  opener communication used by popup-based Google Identity flows while keeping
+  the stricter default everywhere else.
 * **HSTS is scoped to HTTPS and omits `includeSubDomains`.** A `map` on
   `$https` means the header never goes out over plaintext. `includeSubDomains`
   is a one-way door — it takes down every subdomain that is not HTTPS, for the
@@ -602,13 +619,14 @@ zstd  -k -19   dist/**/*.{html,css,js,svg}
 
 `.github/workflows/docker-build.yml` runs in two stages:
 
-* **matrix-build** — on every PR + push, builds 6 image flavors
-  (`base`, `zstd`, `njs`, `geoip2`, `vts`, `all`) on a single arch, runs
-  `nginx -V` and `nginx -t` inside each image. No registry push. Uses GitHub
-  Actions cache per-flavor so re-runs are fast.
-* **release** — on tag pushes only, builds the multi-arch (`linux/amd64`,
-  `linux/arm64`) image with `provenance: mode=max` and `sbom: true`, then
-  pushes to Docker Hub. Provenance + SBOM let downstream consumers verify
+* **matrix-build** — runs only when a release tag is pushed. It builds the
+  `base`, `zstd`, `njs`, `njs-xml`, `geoip2`, `vts`, and `all` flavors
+  on a single architecture, then runs `nginx -V`, `nginx -t`, smoke tests,
+  and example/snippet validation. Ordinary branches, main pushes, and PRs do
+  not spend CI.
+* **release** — after that tag's matrix succeeds, builds the multi-arch
+  (`linux/amd64`, `linux/arm64`) image with `provenance: mode=max` and
+  `sbom: true`, then pushes to Docker Hub. Provenance + SBOM let downstream consumers verify
   the image with `docker buildx imagetools inspect --format "{{ json .SBOM }}"`.
 
 Required repository secrets: `DOCKER_USERNAME`, `DOCKER_PASSWORD`.
