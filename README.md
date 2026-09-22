@@ -36,8 +36,11 @@ version you pinned and invisible to everything that looks for CVEs**: it is not
 an `apk` package, so it does not appear in the image SBOM and scanners cannot
 see it. quictls' last QUIC release is based on OpenSSL 3.3.0 (April 2024) and
 the project wound down once OpenSSL 3.5 LTS landed, so that pin was accumulating
-unpatched OpenSSL advisories that nothing would report. Linking the distro
-package means a base-image rebuild picks up Alpine's security updates.
+unpatched OpenSSL advisories that nothing would report. Alpine packages remain
+visible to SBOM/scanners, but this image intentionally pins both the official
+base digest and the OpenSSL package revision. Security updates therefore require
+an explicit pin bump and full local verification instead of silently changing
+an existing build.
 
 The build fails loudly rather than degrading: if the OpenSSL headers are older
 than 3.5.1, nginx would silently fall back to its `NGX_QUIC_OPENSSL_COMPAT`
