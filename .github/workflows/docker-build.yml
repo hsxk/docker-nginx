@@ -1,12 +1,9 @@
 name: Docker Build
 
-# Release tags remain the normal trigger. The neutral-toolbox upgrade branch is
-# temporarily included so the complete flavor matrix can be proven without
-# creating a Git tag. Remove this branch trigger after the candidate passes.
+# CI is release-only. Development branches, normal main pushes and PRs must
+# be validated locally; a tag is the explicit act that spends CI and publishes.
 on:
   push:
-    branches:
-      - fix/nginx-1.31.6-header-overrides
     tags: ['*']
 
 env:
@@ -86,45 +83,6 @@ jobs:
           severity: CRITICAL,HIGH
           ignore-unfixed: true
           exit-code: '0'
-
-  # ─────────────────────────────────────────────────────────────────────────
-  # No-Git-tag candidate publish for the neutral-toolbox migration.
-  # It runs only after every flavor's build + smoke + example validation passes.
-  # It deliberately does NOT update :latest.
-  # ─────────────────────────────────────────────────────────────────────────
-  candidate-publish:
-    needs: matrix-build
-    if: github.ref == 'refs/heads/fix/nginx-1.31.6-header-overrides'
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-
-      - uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3
-      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
-
-      - name: Login to Docker Hub
-        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
-        with:
-          username: ${{ secrets.DOCKER_USERNAME }}
-          password: ${{ secrets.DOCKER_PASSWORD }}
-
-      - name: Build and push neutral-toolbox candidate
-        id: candidate
-        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
-        with:
-          context: .
-          file: ${{ env.DOCKERFILE }}
-          push: true
-          platforms: linux/amd64,linux/arm64
-          provenance: mode=max
-          sbom: true
-          tags: ${{ env.IMAGE }}:1.31.6-neutral-toolbox
-
-      - name: Print immutable candidate digest
-        run: echo "candidate_digest=${{ steps.candidate.outputs.digest }}"
 
   # ─────────────────────────────────────────────────────────────────────────
   # Release build: multi-arch, signed provenance + SBOM, pushed to Docker Hub.
