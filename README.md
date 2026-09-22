@@ -206,12 +206,22 @@ format), bind-mount your own file over `/etc/nginx/nginx.conf` — but start fro
 the one in this repo, because the image's snippets assume the zones, maps and
 resolver it declares.
 
-All versions are `ARG`s — override at build time:
-```sh
-docker build \
-  --build-arg NGINX_VERSION=1.31.2 \
-  -t my-nginx -f mainline/alpine/Dockerfile .
-```
+### NGINX upgrade rule: change the pins atomically
+
+Do **not** override only `NGINX_VERSION` at build time. An NGINX upgrade is one
+atomic change and must update all of these together in the Dockerfile:
+
+* `NGINX_VERSION`
+* `NGINX_FROM_IMAGE`
+* `NGINX_FROM_DIGEST`
+* `NGINX_SHA256`
+
+The builder immediately compares the pinned official image's `nginx -v` with
+`NGINX_VERSION`, and the source tarball is checksum-verified before configure.
+Changing only the visible version therefore fails deliberately instead of
+quietly compiling modules for one NGINX while running another. If the Alpine
+base's OpenSSL revision changes, update `OPENSSL_PACKAGE_VERSION` in the same
+change and re-run the full local verification matrix.
 
 ## Quick start
 
@@ -467,6 +477,20 @@ the later one win.
   listing an address you do not control hands out IP spoofing.
 
 ## Testing
+
+For a release candidate, use the local release runner. It does **not** create a
+Git tag, push an image, log in to Docker Hub, or invoke GitHub Actions:
+
+```sh
+bash ./tests/local-release-verify.sh
+```
+
+It builds both `base` and `all` locally and writes reproducible evidence under
+`.artifacts/nginx-verify-<UTC timestamp>/`: plain build logs, `nginx -V`,
+`nginx -t`, runtime versions/module lists, smoke results, example validation,
+and Docker image metadata.
+
+For a quicker single-image iteration:
 
 ```sh
 docker build -t my-nginx -f mainline/alpine/Dockerfile .
