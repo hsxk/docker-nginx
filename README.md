@@ -9,14 +9,19 @@ any http-level config in `/etc/nginx/http.d/`.
 
 ## What's in the image
 
-| Component               | Version (default)                | Notes                              |
-|-------------------------|----------------------------------|------------------------------------|
-| NGINX                   | `1.31.6`                         | official image + tarball pinned    |
-| Alpine                  | `3.24`                            | from pinned official slim image    |
-| OpenSSL                 | `3.5.8` (Alpine 3.24 package)     | native QUIC API                    |
-| ngx_brotli              | `google/ngx_brotli` @ pinned SHA | upstream, last update 2023-10      |
-| ngx_cache_purge         | `nginx-modules/ngx_cache_purge`  | active fork; nginx ≥1.25 compat    |
-| headers-more-nginx      | `0.40`                           | tarball SHA256 verified            |
+| Component               | Version / immutable ref                         | Notes                              |
+|-------------------------|-------------------------------------------------|------------------------------------|
+| NGINX                   | `1.31.6`                                       | source SHA256 verified             |
+| Official base           | `nginx:1.31.6-alpine3.24-slim`                | pinned by OCI index digest         |
+| Alpine                  | `3.24`                                          | from official slim image           |
+| OpenSSL                 | `3.5.8-r0`                                      | build + runtime package pinned      |
+| headers-more-nginx      | `0.40`                                           | tarball SHA256 verified            |
+| ngx_brotli              | `a71f9312c2deb28875acc7bacfdd5695a111aa53`    | google/ngx_brotli                  |
+| ngx_cache_purge         | `285354eddd5675c765ba2b79dac09f5d3065b22f`    | nginx-modules maintained fork      |
+| zstd (optional)         | `057a7d339af1111d04b5a9ac5ae9b0250d17cd94`    | tokers/zstd-nginx-module           |
+| njs (optional)          | `1.0.1`                                          | security-fix release               |
+| GeoIP2 (optional)       | `3.4`                                            | SHA256-verified release            |
+| VTS (optional)          | `0.2.7`                                          | SHA256-verified release            |
 
 ### Why the QUIC backend is plain OpenSSL now
 
@@ -41,6 +46,11 @@ shim, so the Dockerfile compiles a version assertion before `./configure`.
 Every external source is pinned to either an immutable git commit SHA or a
 release tag whose tarball is SHA256-verified at build time — flip a version
 and the matching `*_SHA256` ARG together when bumping.
+
+For this release, the NGINX source tarball SHA256 is
+`974ed5298a5e398e008704ed5db284e655fc270c596493dbccada452448fc9f1`.
+The official base image index is pinned to
+`sha256:80149a0e5bc9fa0b8beaff5b8a453f71ba8ba038895d418381297ffa5cd57782`.
 
 ### How this compares to the official `nginx:alpine`
 
