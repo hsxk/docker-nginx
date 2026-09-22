@@ -35,7 +35,6 @@ need awk
 need sed
 need grep
 need tee
-need sha256sum
 
 # Fail before spending build time if a tracked test script is syntactically
 # broken. This caught a real regression while preparing the 1.31.6 upgrade.
@@ -100,7 +99,14 @@ printf 'ok: official tag still resolves to %s\n' "$NGINX_FROM_DIGEST"
 
 source_tar="$ARTIFACT_DIR/nginx-$NGINX_VERSION.tar.gz"
 curl -fsSL "https://nginx.org/download/nginx-$NGINX_VERSION.tar.gz" -o "$source_tar"
-source_digest=$(sha256sum "$source_tar" | awk '{print $1}')
+if command -v sha256sum >/dev/null 2>&1; then
+    source_digest=$(sha256sum "$source_tar" | awk '{print $1}')
+elif command -v shasum >/dev/null 2>&1; then
+    source_digest=$(shasum -a 256 "$source_tar" | awk '{print $1}')
+else
+    echo "error: need sha256sum or shasum for source verification" >&2
+    exit 127
+fi
 printf '%s  nginx-%s.tar.gz\n' "$source_digest" "$NGINX_VERSION" \
     >"$ARTIFACT_DIR/nginx-source-sha256.txt"
 if [ "$source_digest" != "$NGINX_SHA256" ]; then
