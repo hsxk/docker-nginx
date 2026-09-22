@@ -4,9 +4,7 @@ name: Docker Build
 # be validated locally; a tag is the explicit act that spends CI and publishes.
 on:
   push:
-    tags:
-      - '*'
-      - '!1.31.6'
+    tags: ['*']
 
 env:
   IMAGE: hsxk/nginx
