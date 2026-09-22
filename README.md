@@ -11,9 +11,9 @@ any http-level config in `/etc/nginx/http.d/`.
 
 | Component               | Version (default)                | Notes                              |
 |-------------------------|----------------------------------|------------------------------------|
-| NGINX                   | `1.31.3`                         | tarball SHA256 verified            |
-| Alpine                  | `3.22` (pinned by digest)        | oldest branch shipping OpenSSL 3.5 |
-| OpenSSL                 | `3.5.x` (Alpine package)         | for HTTP/3 — see below             |
+| NGINX                   | `1.31.6`                         | official image + tarball pinned    |
+| Alpine                  | `3.24`                            | from pinned official slim image    |
+| OpenSSL                 | `3.5.8` (Alpine 3.24 package)     | native QUIC API                    |
 | ngx_brotli              | `google/ngx_brotli` @ pinned SHA | upstream, last update 2023-10      |
 | ngx_cache_purge         | `nginx-modules/ngx_cache_purge`  | active fork; nginx ≥1.25 compat    |
 | headers-more-nginx      | `0.40`                           | tarball SHA256 verified            |
@@ -45,13 +45,16 @@ and the matching `*_SHA256` ARG together when bumping.
 ### How this compares to the official `nginx:alpine`
 
 Worth being precise, because the gap is narrower than it used to be. As of
-1.31.3 the official image is *also* built with `--with-http_v3_module` against
-OpenSSL 3.5.7 — HTTP/3 is no longer a reason to leave it. What this image adds
-is the third-party module set, which official does not ship in any form:
+1.31.6 the official image is *also* built with `--with-http_v3_module` against
+OpenSSL 3.5.x — HTTP/3 is no longer a reason to leave it. This image now uses
+the official `nginx:1.31.6-alpine3.24-slim` image itself as the immutable
+runtime/build base, pinned to multi-arch digest
+`sha256:80149a0e5bc9fa0b8beaff5b8a453f71ba8ba038895d418381297ffa5cd57782`.
+What this image adds is the third-party module set and opinionated config:
 
 | | official `nginx:alpine` | this image |
 |---|---|---|
-| nginx / OpenSSL | 1.31.3 / 3.5.7 | 1.31.3 / 3.5.7 |
+| nginx / OpenSSL | 1.31.6 / 3.5.x | 1.31.6 / 3.5.8 |
 | HTTP/3 (QUIC) | yes | yes |
 | Brotli | — | `ngx_brotli` |
 | `headers-more` | — | yes |
@@ -86,6 +89,27 @@ conflicting and may ignore outright. Grep your configs for `add_header` naming
 any of: `Strict-Transport-Security`, `X-Content-Type-Options`, `X-Frame-Options`,
 `Referrer-Policy`, `Permissions-Policy`, `Cross-Origin-Opener-Policy` — and
 switch those lines to `more_set_headers "Name: value";`.
+
+If the old deployment intentionally removed framing protection on selected
+routes, migrate those exceptions explicitly:
+
+```nginx
+location ~ ^/(?:office|office-addin)(?:/|$) {
+    include /etc/nginx/snippets/security-headers-allow-framing.conf;
+    more_set_headers "Content-Security-Policy: frame-ancestors 'self' https://*.officeapps.live.com https://*.office.com";
+}
+```
+
+For popup-based identity flows that need `window.opener` communication:
+
+```nginx
+location = /login {
+    include /etc/nginx/snippets/security-headers-popup-auth.conf;
+}
+```
+
+Do not keep an old `add_header X-Frame-Options ...` beside these snippets:
+remove it first, otherwise the old header family can still append a second XFO.
 
 **HSTS lost `includeSubDomains`.** If you were relying on it, set it explicitly
 per site. Browsers that already cached the old directive keep honouring it until
@@ -312,6 +336,8 @@ the later one win.
 | `tls.conf`                       | inside `server {}` | TLS 1.2/1.3, modern ciphers, OCSP stapling          |
 | `http3.conf`                     | inside `server {}` | `Alt-Svc`, `quic_retry` (`quic_gso` opt-in)         |
 | `security-headers.conf`          | (auto, http {})    | Default headers via `more_set_headers` — see below  |
+| `security-headers-allow-framing.conf` | server/location | Clear XFO only; caller sets CSP `frame-ancestors` |
+| `security-headers-popup-auth.conf` | server/location   | COOP override for popup/OAuth flows                  |
 | `real-ip.conf`                   | inside `http {}`   | Recover client IP behind a proxy/CDN (opt-in)       |
 | `acme-challenge.conf`            | inside any server  | `/.well-known/acme-challenge/` for Let's Encrypt    |
 | `proxy-defaults.conf`            | inside `location`  | Standard proxy headers + keepalive                  |
@@ -350,9 +376,24 @@ the later one win.
   which silently stripped the whole security-header set from TLS vhosts and
   from every static asset. headers-more lives in a separate directive family,
   so a downstream `add_header` can no longer clobber it — and it merges
-  properly: a `server`/`location` block declaring its own `more_set_headers`
-  gets the inherited set *plus* its own, its own applied last. Overriding one
-  header for one site is a one-liner and the rest still applies.
+  properly: inherited http-level operations run first and narrower
+  `server`/`location` operations run afterwards. This is why
+  `more_clear_headers "X-Frame-Options";` can remove the global SAMEORIGIN
+  for one embeddable route without dropping HSTS, nosniff, Referrer-Policy,
+  Permissions-Policy, or COOP.
+* **Framing is opt-out, not globally disabled.** Normal responses carry exactly
+  one `X-Frame-Options: SAMEORIGIN`. For Office Add-ins or another explicitly
+  embeddable surface, include `security-headers-allow-framing.conf` in that
+  server/location and set a narrow CSP `frame-ancestors` allow-list there.
+  Do not use `add_header X-Frame-Options ...`; it can create duplicate,
+  conflicting response headers.
+* **Popup authentication has its own opt-in COOP override.** The global default
+  remains `Cross-Origin-Opener-Policy: same-origin`. For routes/sites using a
+  cross-origin popup auth flow, include `security-headers-popup-auth.conf` to
+  emit exactly one `same-origin-allow-popups` value while preserving every
+  other security header. This avoids the class of failures where Google
+  Identity Services opens a blank popup because window-to-window communication
+  was cut by an immutable global COOP policy.
 * **HSTS is scoped to HTTPS and omits `includeSubDomains`.** A `map` on
   `$https` means the header never goes out over plaintext. `includeSubDomains`
   is a one-way door — it takes down every subdomain that is not HTTPS, for the
@@ -408,9 +449,12 @@ docker build -t my-nginx -f mainline/alpine/Dockerfile .
 ```
 
 CI runs both against every `ENABLE_*` flavour. `nginx -t` alone only proves the
-config parses — the smoke test checks the things that have regressed silently
-here before (security headers surviving snippet includes, no HSTS on plaintext,
-the QUIC listener actually bound, OpenSSL new enough for the native QUIC API).
+config parses — the smoke test also verifies the runtime `nginx -v` matches
+`NGINX_VERSION`, mandatory dynamic modules exist and load, HTTP/2 and the QUIC
+listener work, the default XFO is singular, Office-style embedding routes can
+clear XFO while keeping CSP `frame-ancestors` and all other security headers,
+custom XFO overrides do not duplicate, and popup-auth routes can locally relax
+COOP without weakening the global default.
 
 ## Verifying HTTP/3
 
