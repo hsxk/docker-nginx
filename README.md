@@ -540,8 +540,10 @@ bash ./tests/local-release-verify.sh
 Before building, it verifies that the moving official
 `NGINX_FROM_IMAGE` tag still resolves to the pinned immutable digest and
 downloads the NGINX source tarball again to verify `NGINX_SHA256`. It also
-rejects shipped configs that use `add_header` for security headers managed by
-headers-more.
+lints the automatically loaded base configuration and every non-policy snippet
+to ensure none of them auto-loads the opt-in security policy or silently emits
+application/browser policy headers. Application-owned `add_header` remains
+valid and is covered by the smoke tests.
 
 It then builds both `base` and `all` locally and writes reproducible evidence
 under `.artifacts/nginx-verify-<UTC timestamp>/`: plain build logs,
@@ -673,6 +675,13 @@ container. We removed it because:
 * It masked crashes (entrypoint had two foreground processes).
 * It reloaded even when no cert had changed.
 * It was orthogonal to nginx's job.
+
+## Contributing and security
+
+See [CONTRIBUTING.md](./CONTRIBUTING.md) for the development, verification, and
+release workflow. Please read [SECURITY.md](./SECURITY.md) before reporting a
+potential vulnerability; sensitive exploit details should not be posted in a
+public issue.
 
 ## License
 
