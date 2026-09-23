@@ -1,10 +1,20 @@
 name: Docker Build
 
-# CI is release-only. Development branches, normal main pushes and PRs must
-# be validated locally; a tag is the explicit act that spends CI and publishes.
+# Full CI is intentionally enabled for this public repository.
+# Every job uses GitHub's standard ubuntu-latest hosted runner; no larger
+# runners are used. PRs and main pushes validate all shipped flavors, while
+# tag pushes additionally publish the multi-arch release image.
 on:
   push:
+    branches: [main, master]
     tags: ['*']
+  pull_request:
+    branches: [main, master]
+  workflow_dispatch:
+
+concurrency:
+  group: docker-build-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
 
 env:
   IMAGE: hsxk/nginx
