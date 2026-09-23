@@ -1,5 +1,10 @@
 # docker-nginx-quic
 
+[![CI](https://github.com/hsxk/docker-nginx/actions/workflows/docker-build.yml/badge.svg?branch=main)](https://github.com/hsxk/docker-nginx/actions/workflows/docker-build.yml)
+[![Docker Image Version](https://img.shields.io/docker/v/hsxk/nginx?sort=semver)](https://hub.docker.com/r/hsxk/nginx)
+[![Docker Pulls](https://img.shields.io/docker/pulls/hsxk/nginx)](https://hub.docker.com/r/hsxk/nginx)
+[![License: GPL-3.0](https://img.shields.io/badge/license-GPL--3.0-blue.svg)](./LICENSE)
+
 A small, hardened NGINX Docker image with HTTP/3 (QUIC), Brotli, headers-more,
 and FastCGI cache-purge. HTTP/3 runs on **stock OpenSSL 3.5**, linked
 dynamically against the distro package — no vendored TLS fork. Shipped as a
@@ -14,6 +19,30 @@ X-Content-Type-Options. Those headers belong to each application because the
 correct policy depends on its framing, OAuth, popup, asset-sharing and
 cross-origin requirements. `headers-more` is available when a site needs
 replacement/clearing semantics, but it is not used to invent a global policy.
+
+## Published image
+
+Docker Hub: [`hsxk/nginx`](https://hub.docker.com/r/hsxk/nginx)
+
+The current release is **NGINX 1.31.6** for `linux/amd64` and
+`linux/arm64`:
+
+```sh
+docker pull hsxk/nginx:1.31.6
+docker pull hsxk/nginx:latest
+```
+
+For production deployments, prefer the version tag or immutable manifest
+digest rather than relying on a moving `latest` tag:
+
+```text
+hsxk/nginx:1.31.6@sha256:6f9dc3178b2740b53817d918dc211c6d124031df54f50eaaa115eeb09c0c3adc
+```
+
+`latest` currently points at the same 1.31.6 multi-arch manifest. Release
+tags are published only after the full seven-flavor CI matrix succeeds; normal
+`main` pushes and pull requests run the same validation matrix without
+publishing an image.
 
 ## What's in the image
 
@@ -195,15 +224,13 @@ site configs, snippets and other Alpine packages remain freely overridable.
 
 ## Quick start
 
-The image is self-bootstrapping — `docker run` with **zero configuration**
-gives you a working HTTP/3 server on a self-signed cert:
+The published image is self-bootstrapping — `docker run` with **zero
+configuration** gives you a working HTTP/3 server on a self-signed cert:
 
 ```sh
-docker build -t my-nginx -f mainline/alpine/Dockerfile .
-
 docker run -d --name nginx \
   -p 80:80/tcp -p 443:443/tcp -p 443:443/udp \
-  my-nginx
+  hsxk/nginx:1.31.6
 # → https://localhost/  shows "It works."   (browser will warn — self-signed)
 # → https://localhost/healthz  returns 200 ok
 ```
@@ -222,7 +249,7 @@ docker run -d --name nginx \
   -p 80:80 -p 443:443/tcp -p 443:443/udp \
   -v $PWD/my-conf.d:/etc/nginx/conf.d:ro \
   -v letsencrypt:/etc/letsencrypt \
-  my-nginx
+  hsxk/nginx:1.31.6
 ```
 
 The moment you mount anything into `conf.d/`, the built-in default is
@@ -230,10 +257,16 @@ The moment you mount anything into `conf.d/`, the built-in default is
 [`examples/conf.d/`](./examples/conf.d) as starting points (edit
 `server_name` and the `ssl_certificate*` paths).
 
-…or with the supplied compose file:
+…or use the supplied compose file for a **local source build**:
+
 ```sh
-docker compose up -d   # boots into the "It works." fallback
+docker compose up -d --build   # boots into the "It works." fallback
 ```
+
+The compose file intentionally builds the current checkout instead of pulling
+Docker Hub; it is a development/example harness for this repository. Production
+deployments should normally consume the published version tag or immutable
+digest shown above.
 
 ## Layout
 
@@ -692,16 +725,28 @@ zstd  -k -19   dist/**/*.{html,css,js,svg}
 
 ## Continuous integration
 
-`.github/workflows/docker-build.yml` runs in two stages:
+`.github/workflows/docker-build.yml` uses only GitHub's standard
+`ubuntu-latest` hosted runner and has three logical stages:
 
-* **matrix-build** — runs only when a release tag is pushed. It builds the
-  `base`, `zstd`, `njs`, `njs-xml`, `geoip2`, `vts`, and `all` flavors
-  on a single architecture, then runs `nginx -V`, `nginx -t`, smoke tests,
-  and example/snippet validation. Ordinary branches, main pushes, and PRs do
-  not spend CI.
-* **release** — after that tag's matrix succeeds, builds the multi-arch
-  (`linux/amd64`, `linux/arm64`) image with `provenance: mode=max` and
-  `sbom: true`, then pushes to Docker Hub. Provenance + SBOM let downstream consumers verify
-  the image with `docker buildx imagetools inspect --format "{{ json .SBOM }}"`.
+* **matrix-build** — runs on pushes to `main`/`master`, pull requests,
+  release tags, and manual `workflow_dispatch`. It builds `base`, `zstd`,
+  `njs`, `njs-xml`, `geoip2`, `vts`, and `all` on one architecture and
+  runs `nginx -V`, `nginx -t`, the live smoke suite, and combined
+  example/snippet validation for every flavor. The base flavor additionally
+  runs Trivy and fails CI on any fixable HIGH or CRITICAL vulnerability.
+* **ci-success** — a stable aggregate status check that succeeds only when the
+  whole matrix succeeds. Repository rules can require this one check instead of
+  depending on seven matrix-generated check names.
+* **release** — tag pushes only, and only after `ci-success`. It builds the
+  multi-arch (`linux/amd64`, `linux/arm64`) image with
+  `provenance: mode=max` and `sbom: true`, then pushes the version tag and
+  `latest` to Docker Hub. Provenance + SBOM let downstream consumers inspect
+  the published attestation with
+  `docker buildx imagetools inspect --format "{{ json .SBOM }}" <image>`.
 
-Required repository secrets: `DOCKER_USERNAME`, `DOCKER_PASSWORD`.
+Actions are pinned to immutable commit SHAs. Dependabot checks those pins
+weekly. The workflow has explicit least-privilege permissions, concurrency
+cancellation for superseded non-release runs, and job timeouts.
+
+Required repository secrets for tag releases: `DOCKER_USERNAME`,
+`DOCKER_PASSWORD`.

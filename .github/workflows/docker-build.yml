@@ -16,6 +16,9 @@ concurrency:
   group: docker-build-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
 
+permissions:
+  contents: read
+
 env:
   IMAGE: hsxk/nginx
   DOCKERFILE: mainline/alpine/Dockerfile
@@ -27,6 +30,7 @@ jobs:
   # ─────────────────────────────────────────────────────────────────────────
   matrix-build:
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix:
@@ -81,9 +85,8 @@ jobs:
       # TLS stack frozen in April 2024. This is what closes that loop, and
       # what tells us the pinned Alpine base digest has gone stale.
       #
-      # Report-only for now: a new CVE in a base package should not block a
-      # release that has nothing to do with it. Flip exit-code to 1 once the
-      # baseline is known-clean.
+      # The 1.31.6 baseline is clean (0 HIGH/CRITICAL in CI). Treat a future
+      # fixable HIGH/CRITICAL regression as a real gate instead of report-only.
       - name: Vulnerability scan (Trivy)
         if: matrix.flavor.name == 'base'
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
@@ -92,16 +95,33 @@ jobs:
           format: table
           severity: CRITICAL,HIGH
           ignore-unfixed: true
-          exit-code: '0'
+          exit-code: '1'
+
+  # ─────────────────────────────────────────────────────────────────────────
+  # Stable aggregate check for branch protection/rulesets. Matrix job names
+  # contain flavor parameters; requiring this one status is much easier to
+  # keep stable over time.
+  # ─────────────────────────────────────────────────────────────────────────
+  ci-success:
+    needs: matrix-build
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Require full matrix success
+        env:
+          MATRIX_RESULT: ${{ needs.matrix-build.result }}
+        run: test "$MATRIX_RESULT" = "success"
 
   # ─────────────────────────────────────────────────────────────────────────
   # Release build: multi-arch, signed provenance + SBOM, pushed to Docker Hub.
-  # Runs only on tag pushes; gated behind a successful matrix-build.
+  # Runs only on tag pushes; gated behind the stable aggregate CI check.
   # ─────────────────────────────────────────────────────────────────────────
   release:
-    needs: matrix-build
+    needs: ci-success
     if: startsWith(github.ref, 'refs/tags/')
     runs-on: ubuntu-latest
+    timeout-minutes: 60
     permissions:
       contents: read
       id-token: write   # for keyless OIDC signing if we later wire cosign
