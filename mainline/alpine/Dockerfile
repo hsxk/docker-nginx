@@ -30,9 +30,9 @@
 #
 # Keep all three values in lock-step. The first build guard below fails if the
 # official image's embedded NGINX_VERSION ever disagrees with this source build.
-ARG NGINX_VERSION=1.31.6
-ARG NGINX_FROM_IMAGE=nginx:1.31.6-alpine3.24-slim
-ARG NGINX_FROM_DIGEST=sha256:80149a0e5bc9fa0b8beaff5b8a453f71ba8ba038895d418381297ffa5cd57782
+ARG NGINX_VERSION=1.31.7
+ARG NGINX_FROM_IMAGE=nginx:1.31.7-alpine3.24-slim
+ARG NGINX_FROM_DIGEST=sha256:b274dae54cf9792e1e8696a14081a50f29d74830d9a56a4ffcdc4bc8fb006524
 FROM ${NGINX_FROM_IMAGE}@${NGINX_FROM_DIGEST} AS builder
 ARG NGINX_VERSION
 
@@ -43,12 +43,12 @@ RUN set -eux; \
 # ─── Pinned source versions (bump deliberately) ─────────────────────────────
 # All refs are pinned to immutable commit SHAs / signed release tags. The NGINX
 # tarball checksum must be updated together with NGINX_VERSION.
-ARG NGINX_SHA256=974ed5298a5e398e008704ed5db284e655fc270c596493dbccada452448fc9f1
+ARG NGINX_SHA256=89ea8a3dc171511f7325043b50e4c036248d9fad5feb7ec809c0b82d5df42c65
 
 # Keep build-time headers and runtime libssl/libcrypto on the same Alpine
-# package revision. Alpine 3.24 currently ships OpenSSL 3.5.8-r0 on the release
+# package revision. Alpine 3.24 currently ships OpenSSL 3.5.9-r0 on the release
 # architectures used here (amd64/arm64).
-ARG OPENSSL_PACKAGE_VERSION=3.5.8-r0
+ARG OPENSSL_PACKAGE_VERSION=3.5.9-r0
 
 ARG HEADERS_MORE_VERSION=0.40
 ARG HEADERS_MORE_SHA256=c14cb5e6c998590c209efbf77bd7637ce2cab02332e4192756a8af5b26ba4284
@@ -61,14 +61,14 @@ ARG NGX_BROTLI_REF=a71f9312c2deb28875acc7bacfdd5695a111aa53
 # is the actively maintained fork (nginx ≥1.25 compatible, fix for the
 # proxy_cache_purge ctx leak landed 2025).
 ARG NGX_CACHE_PURGE_REPO=https://github.com/nginx-modules/ngx_cache_purge
-ARG NGX_CACHE_PURGE_REF=285354eddd5675c765ba2b79dac09f5d3065b22f
+ARG NGX_CACHE_PURGE_REF=a6da1352f52a8a02dd6828e88c39ed42fddcee96
 
 # Optional modules — versions used only when their ENABLE_* arg is "1".
 ARG ZSTD_NGINX_REPO=https://github.com/tokers/zstd-nginx-module
 ARG ZSTD_NGINX_REF=057a7d339af1111d04b5a9ac5ae9b0250d17cd94
 
-ARG NJS_VERSION=1.0.1
-ARG NJS_SHA256=74372cfcbf11eb0a71bc555e19dc785f61d561d5663d254474da6c8c9e50a6a7
+ARG NJS_VERSION=1.0.2
+ARG NJS_SHA256=ff86d2dd6bf7b874f5ade21da9f17837807e39a7b8172bf7cd3c87fd9f8d637e
 
 ARG GEOIP2_VERSION=3.4
 ARG GEOIP2_SHA256=ad72fc23348d715a330994984531fab9b3606e160483236737f9a4a6957d9452
@@ -166,7 +166,7 @@ RUN set -eux; cd "/tmp/build/nginx-${NGINX_VERSION}/extensions"; \
         apk add --no-cache --virtual .zstd-build zstd-dev; \
     fi; \
     if [ "${ENABLE_NJS}" = "1" ]; then \
-        curl -fSLo njs.tgz "https://github.com/nginx/njs/archive/refs/tags/${NJS_VERSION}.tar.gz"; \
+        curl -fSLo njs.tgz "https://github.com/nginx/njs/releases/download/${NJS_VERSION}/njs-${NJS_VERSION}.tar.gz"; \
         echo "${NJS_SHA256}  njs.tgz" | sha256sum -c -; \
         tar -xzf njs.tgz && mv "njs-${NJS_VERSION}" njs && rm njs.tgz; \
         if [ "${ENABLE_NJS_XML}" = "1" ]; then \
@@ -282,7 +282,7 @@ FROM ${NGINX_FROM_IMAGE}@${NGINX_FROM_DIGEST}
 ARG NGINX_VERSION
 ARG NGINX_FROM_IMAGE
 ARG NGINX_FROM_DIGEST
-ARG OPENSSL_PACKAGE_VERSION=3.5.8-r0
+ARG OPENSSL_PACKAGE_VERSION=3.5.9-r0
 
 RUN set -eux; \
     image_version="$(nginx -v 2>&1 | sed 's#^nginx version: nginx/##')"; \
@@ -311,7 +311,7 @@ RUN set -eux; \
     test "$(id -u nginx)" = "101"; \
     apk add --no-cache \
       ca-certificates tzdata pcre2 zlib brotli-libs "openssl=${OPENSSL_PACKAGE_VERSION}"; \
-    test "$(openssl version | awk '{print $2}')" = "3.5.8"; \
+    test "$(openssl version | awk '{print $2}')" = "3.5.9"; \
     if [ "${ENABLE_ZSTD}"    = "1" ]; then apk add --no-cache zstd-libs; fi; \
     if [ "${ENABLE_GEOIP2}"  = "1" ]; then apk add --no-cache libmaxminddb; fi; \
     if [ "${ENABLE_NJS_XML}" = "1" ]; then apk add --no-cache libxml2 libxslt; fi; \
@@ -325,7 +325,7 @@ RUN set -eux; \
     ln -sf /dev/stdout /var/log/nginx/access.log; \
     ln -sf /dev/stderr /var/log/nginx/error.log
 
-# nginx binary + modules are built from the exact same 1.31.6 source/configure
+# nginx binary + modules are built from the exact same 1.31.7 source/configure
 # invocation, so dynamic-module ABI cannot drift away from the runtime binary.
 COPY --from=builder /usr/sbin/nginx         /usr/sbin/nginx
 COPY --from=builder /usr/lib/nginx/modules/ /usr/lib/nginx/modules/

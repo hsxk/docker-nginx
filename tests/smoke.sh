@@ -72,7 +72,7 @@ case "$binary_version_line" in
 esac
 
 openssl_version=$(docker run --rm --entrypoint openssl "$IMAGE" version | awk '{print $2}')
-check "runtime OpenSSL version" "$openssl_version" "3.5.8"
+check "runtime OpenSSL version" "$openssl_version" "3.5.9"
 
 if docker run --rm --entrypoint nginx "$IMAGE" -t >/dev/null 2>&1; then
     pass "nginx -t"

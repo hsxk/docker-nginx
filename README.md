@@ -39,7 +39,9 @@ digest rather than relying on a moving `latest` tag:
 hsxk/nginx:1.31.6@sha256:6f9dc3178b2740b53817d918dc211c6d124031df54f50eaaa115eeb09c0c3adc
 ```
 
-`latest` currently points at the same 1.31.6 multi-arch manifest. Release
+`latest` currently points at the same 1.31.6 multi-arch manifest. The main branch
+now builds 1.31.7; the published 1.31.6 references above remain accurate until
+a successful tag release publishes and verifies 1.31.7. Release
 tags are published only after the full seven-flavor CI matrix succeeds; normal
 `main` pushes and pull requests run the same validation matrix without
 publishing an image.
@@ -48,15 +50,15 @@ publishing an image.
 
 | Component               | Version / immutable ref                         | Notes                              |
 |-------------------------|-------------------------------------------------|------------------------------------|
-| NGINX                   | `1.31.6`                                       | source SHA256 verified             |
-| Official base           | `nginx:1.31.6-alpine3.24-slim`                | pinned by OCI index digest         |
+| NGINX                   | `1.31.7`                                       | source SHA256 verified             |
+| Official base           | `nginx:1.31.7-alpine3.24-slim`                | pinned by OCI index digest         |
 | Alpine                  | `3.24`                                          | from official slim image           |
-| OpenSSL                 | `3.5.8-r0`                                      | build + runtime package pinned      |
+| OpenSSL                 | `3.5.9-r0`                                      | build + runtime package pinned      |
 | headers-more-nginx      | `0.40`                                           | tarball SHA256 verified            |
 | ngx_brotli              | `a71f9312c2deb28875acc7bacfdd5695a111aa53`    | google/ngx_brotli                  |
-| ngx_cache_purge         | `285354eddd5675c765ba2b79dac09f5d3065b22f`    | upstream lists tested through 1.29; this image runs a live purge smoke test |
+| ngx_cache_purge         | `a6da1352f52a8a02dd6828e88c39ed42fddcee96`    | upstream lists tested through 1.29; this image runs a live purge smoke test |
 | zstd (optional)         | `057a7d339af1111d04b5a9ac5ae9b0250d17cd94`    | tokers/zstd-nginx-module           |
-| njs (optional)          | `1.0.1`                                          | security-fix release               |
+| njs (optional)          | `1.0.2`                                          | security-fix release               |
 | GeoIP2 (optional)       | `3.4`                                            | SHA256-verified release            |
 | VTS (optional)          | `0.2.7`                                          | SHA256-verified release            |
 
@@ -88,23 +90,23 @@ release tag whose tarball is SHA256-verified at build time — flip a version
 and the matching `*_SHA256` ARG together when bumping.
 
 For this release, the NGINX source tarball SHA256 is
-`974ed5298a5e398e008704ed5db284e655fc270c596493dbccada452448fc9f1`.
+`89ea8a3dc171511f7325043b50e4c036248d9fad5feb7ec809c0b82d5df42c65`.
 The official base image index is pinned to
-`sha256:80149a0e5bc9fa0b8beaff5b8a453f71ba8ba038895d418381297ffa5cd57782`.
+`sha256:b274dae54cf9792e1e8696a14081a50f29d74830d9a56a4ffcdc4bc8fb006524`.
 
 ### How this compares to the official `nginx:alpine`
 
 Worth being precise, because the gap is narrower than it used to be. As of
-1.31.6 the official image is *also* built with `--with-http_v3_module` against
+1.31.7 the official image is *also* built with `--with-http_v3_module` against
 OpenSSL 3.5.x — HTTP/3 is no longer a reason to leave it. This image now uses
-the official `nginx:1.31.6-alpine3.24-slim` image itself as the immutable
+the official `nginx:1.31.7-alpine3.24-slim` image itself as the immutable
 runtime/build base, pinned to multi-arch digest
-`sha256:80149a0e5bc9fa0b8beaff5b8a453f71ba8ba038895d418381297ffa5cd57782`.
+`sha256:b274dae54cf9792e1e8696a14081a50f29d74830d9a56a4ffcdc4bc8fb006524`.
 What this image adds is the third-party module set and opinionated config:
 
 | | official `nginx:alpine` | this image |
 |---|---|---|
-| nginx / OpenSSL | 1.31.6 / 3.5.x | 1.31.6 / 3.5.8 |
+| nginx / OpenSSL | 1.31.7 / 3.5.x | 1.31.7 / 3.5.9 |
 | HTTP/3 (QUIC) | yes | yes |
 | Brotli | — | `ngx_brotli` |
 | `headers-more` | — | yes |
