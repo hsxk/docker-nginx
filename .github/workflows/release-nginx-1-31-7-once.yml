@@ -1,0 +1,69 @@
+name: One-time NGINX 1.31.7 publication
+
+# This bootstrap exists only to publish the already-tested 1.31.7 release.
+# The GitHub connector cannot create tag refs or dispatch workflows directly.
+# A GITHUB_TOKEN tag push cannot trigger another workflow automatically, so
+# we explicitly dispatch the existing Docker Build workflow on that tag.
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/release-nginx-1-31-7-once.yml
+
+permissions:
+  contents: write
+  actions: write
+
+jobs:
+  create-tag-and-start-release:
+    if: github.repository == 'hsxk/docker-nginx'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      GH_TOKEN: ${{ github.token }}
+      RELEASE_VERSION: 1.31.7
+      RELEASE_COMMIT: fd61932975fa8608b6029947c26d95d28e205616
+
+    steps:
+      - name: Create an annotated release tag only at the verified commit
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REF" = "refs/heads/main"
+          test "$GITHUB_REPOSITORY" = "hsxk/docker-nginx"
+
+          ref="repos/$GITHUB_REPOSITORY/git/ref/tags/$RELEASE_VERSION"
+          if existing_ref="$(gh api "$ref" 2>/dev/null)"; then
+            existing_type="$(jq -r '.object.type' <<<"$existing_ref")"
+            existing_sha="$(jq -r '.object.sha' <<<"$existing_ref")"
+            if [ "$existing_type" = tag ]; then
+              tagged_sha="$(gh api "repos/$GITHUB_REPOSITORY/git/tags/$existing_sha" --jq '.object.sha')"
+            elif [ "$existing_type" = commit ]; then
+              tagged_sha="$existing_sha"
+            else
+              echo "Unexpected tag target type: $existing_type" >&2
+              exit 1
+            fi
+            test "$tagged_sha" = "$RELEASE_COMMIT" || {
+              echo "Ref $RELEASE_VERSION points at an unexpected commit" >&2
+              exit 1
+            }
+            echo "Existing matching tag found: $RELEASE_VERSION"
+          else
+            tag_sha="$(gh api -X POST "repos/$GITHUB_REPOSITORY/git/tags" \
+              -f tag="$RELEASE_VERSION" \
+              -f message="NGINX $RELEASE_VERSION security release" \
+              -f object="$RELEASE_COMMIT" -f type=commit --jq '.sha')"
+            gh api -X POST "repos/$GITHUB_REPOSITORY/git/refs" \
+              -f ref="refs/tags/$RELEASE_VERSION" -f sha="$tag_sha" >/dev/null
+            echo "Created annotated tag $RELEASE_VERSION -> $RELEASE_COMMIT"
+          fi
+
+      - name: Dispatch existing seven-flavor CI and multi-arch Docker Hub publisher
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh api -X POST \
+            "repos/$GITHUB_REPOSITORY/actions/workflows/docker-build.yml/dispatches" \
+            -f ref="$RELEASE_VERSION"
+          echo "Dispatched Docker Build on refs/tags/$RELEASE_VERSION"
