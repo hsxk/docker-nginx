@@ -56,7 +56,7 @@ publishing an image.
 | OpenSSL                 | `3.5.9-r0`                                      | build + runtime package pinned      |
 | headers-more-nginx      | `0.40`                                           | tarball SHA256 verified            |
 | ngx_brotli              | `a71f9312c2deb28875acc7bacfdd5695a111aa53`    | google/ngx_brotli                  |
-| ngx_cache_purge         | `285354eddd5675c765ba2b79dac09f5d3065b22f`    | upstream lists tested through 1.29; this image runs a live purge smoke test |
+| ngx_cache_purge         | `a6da1352f52a8a02dd6828e88c39ed42fddcee96`    | upstream lists tested through 1.29; this image runs a live purge smoke test |
 | zstd (optional)         | `057a7d339af1111d04b5a9ac5ae9b0250d17cd94`    | tokers/zstd-nginx-module           |
 | njs (optional)          | `1.0.2`                                          | security-fix release               |
 | GeoIP2 (optional)       | `3.4`                                            | SHA256-verified release            |
