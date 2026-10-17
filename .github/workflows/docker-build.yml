@@ -85,7 +85,7 @@ jobs:
       # TLS stack frozen in April 2024. This is what closes that loop, and
       # what tells us the pinned Alpine base digest has gone stale.
       #
-      # The 1.31.6 baseline is clean (0 HIGH/CRITICAL in CI). Treat a future
+      # Verify the 1.31.7 baseline is clean (0 HIGH/CRITICAL in CI). Treat a future
       # fixable HIGH/CRITICAL regression as a real gate instead of report-only.
       - name: Vulnerability scan (Trivy)
         if: matrix.flavor.name == 'base'
