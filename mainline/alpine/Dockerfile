@@ -61,7 +61,7 @@ ARG NGX_BROTLI_REF=a71f9312c2deb28875acc7bacfdd5695a111aa53
 # is the actively maintained fork (nginx ≥1.25 compatible, fix for the
 # proxy_cache_purge ctx leak landed 2025).
 ARG NGX_CACHE_PURGE_REPO=https://github.com/nginx-modules/ngx_cache_purge
-ARG NGX_CACHE_PURGE_REF=285354eddd5675c765ba2b79dac09f5d3065b22f
+ARG NGX_CACHE_PURGE_REF=a6da1352f52a8a02dd6828e88c39ed42fddcee96
 
 # Optional modules — versions used only when their ENABLE_* arg is "1".
 ARG ZSTD_NGINX_REPO=https://github.com/tokers/zstd-nginx-module
