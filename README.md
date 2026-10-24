@@ -170,7 +170,10 @@ The [NGINX upstream update watch](.github/workflows/nginx-update-watch.yml)
 runs **every Monday at 02:17 UTC (11:17 JST)** and can also be started via
 `workflow_dispatch`. It reads official NGINX GitHub releases, compares the latest
 mainline version with the pinned Dockerfile version, and opens **one GitHub issue
-per newer version** (avoiding duplicate open issues).
+per newer version** (avoiding duplicate open issues). The same scheduled workflow
+rebuilds the pinned base flavor and reruns the Trivy HIGH/CRITICAL vulnerability
+gate against newly published security advisories. A newly detected fixable
+vulnerability fails the scheduled workflow; it does not silently mutate pins.
 
 This is a notification workflow, **not an unattended image release**. In particular
 it does **not** change the source checksum, official base image digest, OpenSSL
