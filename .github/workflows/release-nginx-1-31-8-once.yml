@@ -1,0 +1,85 @@
+name: One-time NGINX 1.31.8 publication
+
+# Publish the verified 1.31.8 commit without requiring any manual tag creation.
+# An automation GITHUB_TOKEN tag push does not trigger other Actions workflows;
+# explicitly dispatch docker-build.yml at refs/tags/1.31.8 instead.
+# Remove this narrowly scoped bootstrap after the release has been verified.
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/release-nginx-1-31-8-once.yml
+
+permissions:
+  contents: write
+  actions: write
+
+concurrency:
+  group: one-time-nginx-1-31-8-release
+  cancel-in-progress: false
+
+jobs:
+  create-tag-and-start-release:
+    if: github.repository == 'hsxk/docker-nginx'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      GH_TOKEN: ${{ github.token }}
+      RELEASE_VERSION: 1.31.8
+      RELEASE_COMMIT: 663c9faacbfee0b549ce32ae61de19c993ba0f09
+
+    steps:
+      - name: Validate release commit source pin and version
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REF" = refs/heads/main
+          test "$GITHUB_REPOSITORY" = hsxk/docker-nginx
+          target="repos/$GITHUB_REPOSITORY/contents/mainline/alpine/Dockerfile?ref=$RELEASE_COMMIT"
+          pinned="$(gh api "$target" --jq '.content' | base64 --decode)"
+          grep -qx 'ARG NGINX_VERSION=1.31.8' <<<"$pinned"
+          grep -qx 'ARG NGINX_FROM_IMAGE=nginx:1.31.8-alpine3.24-slim' <<<"$pinned"
+          grep -q '^ARG NGINX_FROM_DIGEST=sha256:' <<<"$pinned"
+          grep -q '^ARG NGINX_SHA256=' <<<"$pinned"
+          echo "Verified source commit $RELEASE_COMMIT pins NGINX $RELEASE_VERSION"
+
+      - name: Create an annotated tag only at the tested upgrade commit
+        shell: bash
+        run: |
+          set -euo pipefail
+          ref="repos/$GITHUB_REPOSITORY/git/ref/tags/$RELEASE_VERSION"
+          if existing_ref="$(gh api "$ref" 2>/dev/null)"; then
+            existing_type="$(jq -r '.object.type' <<<"$existing_ref")"
+            existing_sha="$(jq -r '.object.sha' <<<"$existing_ref")"
+            if [ "$existing_type" = tag ]; then
+              tagged_sha="$(gh api "repos/$GITHUB_REPOSITORY/git/tags/$existing_sha" --jq '.object.sha')"
+            elif [ "$existing_type" = commit ]; then
+              tagged_sha="$existing_sha"
+            else
+              echo "Unexpected tag target type: $existing_type" >&2
+              exit 1
+            fi
+            test "$tagged_sha" = "$RELEASE_COMMIT" || {
+              echo "Ref $RELEASE_VERSION points at another commit" >&2
+              exit 1
+            }
+            echo "Existing matching tag found: $RELEASE_VERSION"
+          else
+            tag_sha="$(gh api -X POST "repos/$GITHUB_REPOSITORY/git/tags" \
+              -f tag="$RELEASE_VERSION" \
+              -f message="NGINX $RELEASE_VERSION release (tested commit $RELEASE_COMMIT)" \
+              -f object="$RELEASE_COMMIT" -f type=commit --jq '.sha')"
+            gh api -X POST "repos/$GITHUB_REPOSITORY/git/refs" \
+              -f ref="refs/tags/$RELEASE_VERSION" -f sha="$tag_sha" >/dev/null
+            echo "Created annotated tag $RELEASE_VERSION -> $RELEASE_COMMIT"
+          fi
+
+      - name: Dispatch the existing seven-flavor CI and Docker Hub publisher
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh api -X POST \
+            "repos/$GITHUB_REPOSITORY/actions/workflows/docker-build.yml/dispatches" \
+            -f ref="$RELEASE_VERSION"
+          echo "Dispatched Docker Build on refs/tags/$RELEASE_VERSION"
+          echo "The release workflow will rerun all seven flavors, Trivy and Docker Hub multi-arch publishing."
