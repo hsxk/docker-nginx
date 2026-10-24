@@ -38,7 +38,7 @@ class NginxVersionWatchTests(unittest.TestCase):
 
         conf = (Path(__file__).resolve().parents[1] /
                 "mainline/alpine/files/snippets/real-ip.conf").read_text()
-        sources = re.findall(r"^set_real_ip_from\\s+([^;]+);", conf, flags=re.MULTILINE)
+        sources = re.findall(r"^set_real_ip_from\s+([^;]+);", conf, flags=re.MULTILINE)
         self.assertEqual(sources, ["127.0.0.1", "::1"])
 
     def test_errors_when_upstream_api_has_no_mainline_releases(self):
