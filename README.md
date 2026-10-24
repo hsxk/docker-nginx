@@ -24,34 +24,41 @@ replacement/clearing semantics, but it is not used to invent a global policy.
 
 Docker Hub: [`hsxk/nginx`](https://hub.docker.com/r/hsxk/nginx)
 
-The current release is **NGINX 1.31.6** for `linux/amd64` and
-`linux/arm64`:
+The repository targets **NGINX 1.31.8** for `linux/amd64` and `linux/arm64`.
+The verified source and official base image pins live in
+[`mainline/alpine/Dockerfile`](mainline/alpine/Dockerfile).
 
 ```sh
-docker pull hsxk/nginx:1.31.6
-docker pull hsxk/nginx:latest
+# Use this AFTER the 1.31.8 GitHub Actions release job succeeds.
+docker pull hsxk/nginx:1.31.8
+docker buildx imagetools inspect hsxk/nginx:1.31.8
 ```
 
-For production deployments, prefer the version tag or immutable manifest
-digest rather than relying on a moving `latest` tag:
+For production, pin the **published** `hsxk/nginx:1.31.8` multi-arch manifest
+digest returned by the command above. The official upstream `nginx:1.31.8`
+base image digest in the Dockerfile is a **different** digest and must not be
+used to pin `hsxk/nginx`. Do not infer successful publication from a green PR:
+the release job must also push and verify the output.
 
-```text
-hsxk/nginx:1.31.6@sha256:6f9dc3178b2740b53817d918dc211c6d124031df54f50eaaa115eeb09c0c3adc
-```
+**Security notice (2026-10-24):** The older published `hsxk/nginx:1.31.6`
+predates the October 14 upstream security fixes (CVE-2026-15176,
+CVE-2026-93479, CVE-2026-95101, CVE-2026-97629, CVE-2026-97205).
+Do not deploy this historical tag to production. Validate the *running*
+binary (`docker exec <container> nginx -v`) and the image digest.
 
-`latest` currently points at the same 1.31.6 multi-arch manifest. The main branch
-now builds 1.31.7; the published 1.31.6 references above remain accurate until
-a successful tag release publishes and verifies 1.31.7. Release
-tags are published only after the full seven-flavor CI matrix succeeds; normal
-`main` pushes and pull requests run the same validation matrix without
-publishing an image.
+The full seven-flavor matrix and Trivy gate run on PR/main/tag pushes.
+Ordinary PR/main pushes do not publish. Publishing requires either a reviewed
+version-matching Git tag, or an **explicit** `[publish-image]` marker in a
+reviewed `main` merge commit. In both cases, the release job waits for the
+full CI matrix and pushes the multi-arch version tag plus `latest`. The
+marked main flow records the matching Git tag **after** the Docker Hub push.
 
 ## What's in the image
 
 | Component               | Version / immutable ref                         | Notes                              |
 |-------------------------|-------------------------------------------------|------------------------------------|
-| NGINX                   | `1.31.7`                                       | source SHA256 verified             |
-| Official base           | `nginx:1.31.7-alpine3.24-slim`                | pinned by OCI index digest         |
+| NGINX                   | `1.31.8`                                       | source SHA256 verified             |
+| Official base           | `nginx:1.31.8-alpine3.24-slim`                | pinned by OCI index digest         |
 | Alpine                  | `3.24`                                          | from official slim image           |
 | OpenSSL                 | `3.5.9-r0`                                      | build + runtime package pinned      |
 | headers-more-nginx      | `0.40`                                           | tarball SHA256 verified            |
@@ -90,23 +97,23 @@ release tag whose tarball is SHA256-verified at build time — flip a version
 and the matching `*_SHA256` ARG together when bumping.
 
 For this release, the NGINX source tarball SHA256 is
-`89ea8a3dc171511f7325043b50e4c036248d9fad5feb7ec809c0b82d5df42c65`.
+`0652b760b3b772d2ec17b47c2fc15d9a95e6fe35cd5b877eadc1a62d9bc75af1`.
 The official base image index is pinned to
-`sha256:b274dae54cf9792e1e8696a14081a50f29d74830d9a56a4ffcdc4bc8fb006524`.
+`sha256:296bb9f2b5a6e69c2192a14b802cb6acc89c2a1d0dd46dfe266b06e49c0b8df4`.
 
 ### How this compares to the official `nginx:alpine`
 
 Worth being precise, because the gap is narrower than it used to be. As of
-1.31.7 the official image is *also* built with `--with-http_v3_module` against
+1.31.8 the official image is *also* built with `--with-http_v3_module` against
 OpenSSL 3.5.x — HTTP/3 is no longer a reason to leave it. This image now uses
-the official `nginx:1.31.7-alpine3.24-slim` image itself as the immutable
+the official `nginx:1.31.8-alpine3.24-slim` image itself as the immutable
 runtime/build base, pinned to multi-arch digest
-`sha256:b274dae54cf9792e1e8696a14081a50f29d74830d9a56a4ffcdc4bc8fb006524`.
+`sha256:296bb9f2b5a6e69c2192a14b802cb6acc89c2a1d0dd46dfe266b06e49c0b8df4`.
 What this image adds is the third-party module set and opinionated config:
 
 | | official `nginx:alpine` | this image |
 |---|---|---|
-| nginx / OpenSSL | 1.31.7 / 3.5.x | 1.31.7 / 3.5.9 |
+| nginx / OpenSSL | 1.31.8 / 3.5.x | 1.31.8 / 3.5.9 |
 | HTTP/3 (QUIC) | yes | yes |
 | Brotli | — | `ngx_brotli` |
 | `headers-more` | — | yes |
@@ -156,6 +163,38 @@ This release also pins NGINX, the official Alpine slim base digest, source
 SHA256, and OpenSSL package revision together. Do not bump only the visible
 NGINX version; use the atomic upgrade rule below and rerun the full local/CI
 matrix.
+
+## Automated upstream update checks
+
+The [NGINX upstream update watch](.github/workflows/nginx-update-watch.yml)
+runs **every Monday at 02:17 UTC (11:17 JST)** and can also be started via
+`workflow_dispatch`. It reads official NGINX GitHub releases, compares the latest
+mainline version with the pinned Dockerfile version, and opens **one GitHub issue
+per newer version** (avoiding duplicate open issues). The same scheduled workflow
+rebuilds the pinned base flavor and reruns the Trivy HIGH/CRITICAL vulnerability
+gate against newly published security advisories. A newly detected fixable
+vulnerability fails the scheduled workflow; it does not silently mutate pins.
+
+This is a notification workflow, **not an unattended image release**. In particular
+it does **not** change the source checksum, official base image digest, OpenSSL
+pins, Docker Hub tags, or production containers. A maintainer must review
+release notes, update pins atomically and let the full matrix/Trivy gates pass
+before explicitly releasing a signed/provenance-enabled multi-arch image.
+
+### Trusted proxy IPs (migration note)
+
+`snippets/real-ip.conf` is opt-in and now trusts **loopback only by default**.
+Previous versions trusted all RFC1918/ULA ranges, which could let an untrusted
+container on a shared bridge forge `X-Forwarded-For` and bypass IP-based rate
+limits or access controls.
+
+If you previously used this snippet behind a reverse proxy, add **only** your
+actual ingress proxy address (or a tightly controlled proxy subnet) using
+`set_real_ip_from`. Otherwise all visitors may appear to be the ingress IP and
+share one rate-limit bucket. For Cloudflare, allow only the official, current
+Cloudflare egress ranges and restrict direct origin access; preferably configure
+`real_ip_header CF-Connecting-IP;` when only Cloudflare terminates requests.
+Do not blindly enable trust in `0.0.0.0/0` or all Docker private ranges.
 
 ## Optional modules
 
@@ -232,7 +271,7 @@ configuration** gives you a working HTTP/3 server on a self-signed cert:
 ```sh
 docker run -d --name nginx \
   -p 80:80/tcp -p 443:443/tcp -p 443:443/udp \
-  hsxk/nginx:1.31.6
+  hsxk/nginx:1.31.8
 # → https://localhost/  shows "It works."   (browser will warn — self-signed)
 # → https://localhost/healthz  returns 200 ok
 ```
@@ -251,7 +290,7 @@ docker run -d --name nginx \
   -p 80:80 -p 443:443/tcp -p 443:443/udp \
   -v $PWD/my-conf.d:/etc/nginx/conf.d:ro \
   -v letsencrypt:/etc/letsencrypt \
-  hsxk/nginx:1.31.6
+  hsxk/nginx:1.31.8
 ```
 
 The moment you mount anything into `conf.d/`, the built-in default is

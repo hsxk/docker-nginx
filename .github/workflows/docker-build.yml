@@ -48,6 +48,10 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
+      - name: Check upstream watcher and security-default unit tests
+        if: matrix.flavor.name == 'base'
+        run: python3 -m unittest discover -s tests -p 'test_nginx_update_watch.py' -v
+
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
 
       - name: Build (${{ matrix.flavor.name }})
@@ -85,7 +89,7 @@ jobs:
       # TLS stack frozen in April 2024. This is what closes that loop, and
       # what tells us the pinned Alpine base digest has gone stale.
       #
-      # Verify the 1.31.7 baseline is clean (0 HIGH/CRITICAL in CI). Treat a future
+      # Verify the 1.31.8 baseline is clean (0 HIGH/CRITICAL in CI). Treat a future
       # fixable HIGH/CRITICAL regression as a real gate instead of report-only.
       - name: Vulnerability scan (Trivy)
         if: matrix.flavor.name == 'base'
@@ -114,20 +118,39 @@ jobs:
         run: test "$MATRIX_RESULT" = "success"
 
   # ─────────────────────────────────────────────────────────────────────────
-  # Release build: multi-arch, signed provenance + SBOM, pushed to Docker Hub.
-  # Runs only on tag pushes; gated behind the stable aggregate CI check.
+  # Release build: multi-arch image with provenance + SBOM.
+  # Normally tag-gated; the explicit [publish-image] commit marker allows
+  # a single reviewed main merge to publish *after* its full CI matrix passes.
+  # Ordinary PR/main pushes NEVER publish; the weekly update watcher only
+  # files issues and cannot trigger this job.
   # ─────────────────────────────────────────────────────────────────────────
   release:
     needs: ci-success
-    if: startsWith(github.ref, 'refs/tags/')
+    if: >-
+      github.event_name == 'push' &&
+      (startsWith(github.ref, 'refs/tags/') ||
+       (github.ref == 'refs/heads/main' && contains(github.event.head_commit.message, '[publish-image]')))
     runs-on: ubuntu-latest
     timeout-minutes: 60
     permissions:
-      contents: read
-      id-token: write   # for keyless OIDC signing if we later wire cosign
+      contents: write   # push a matching release tag after a successful main publish
+      id-token: write   # available for keyless OIDC signing if cosign is added
 
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Resolve and validate immutable release version
+        id: release-version
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="$(sed -n 's/^ARG NGINX_VERSION=//p' mainline/alpine/Dockerfile | head -1)"
+          [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "invalid NGINX_VERSION" >&2; exit 1; }
+          if [[ "${GITHUB_REF_TYPE}" == "tag" && "${GITHUB_REF_NAME}" != "$version" ]]; then
+            echo "Tag ${GITHUB_REF_NAME} does not match Dockerfile NGINX_VERSION $version" >&2
+            exit 1
+          fi
+          echo "tag=$version" >> "$GITHUB_OUTPUT"
 
       - uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
@@ -148,7 +171,7 @@ jobs:
           provenance: mode=max
           sbom: true
           tags: |
-            ${{ env.IMAGE }}:${{ github.ref_name }}
+            ${{ env.IMAGE }}:${{ steps.release-version.outputs.tag }}
             ${{ env.IMAGE }}:latest
           cache-from: |
             type=registry,ref=${{ env.IMAGE }}:cache-linux-amd64
@@ -156,3 +179,21 @@ jobs:
           cache-to: |
             type=registry,ref=${{ env.IMAGE }}:cache-linux-amd64,mode=max
             type=registry,ref=${{ env.IMAGE }}:cache-linux-arm64,mode=max
+
+      # GITHUB_TOKEN pushes do not recursively trigger the tag workflow;
+      # the already validated job above is the release, so that is intended.
+      - name: Record git release tag after successful Docker Hub publish
+        if: github.ref == 'refs/heads/main'
+        shell: bash
+        env:
+          VERSION: ${{ steps.release-version.outputs.tag }}
+        run: |
+          set -euo pipefail
+          if git ls-remote --exit-code --tags origin "refs/tags/${VERSION}" >/dev/null 2>&1; then
+            echo "Release tag ${VERSION} already exists; verifying it points at this commit."
+            remote_sha="$(git ls-remote --tags origin "refs/tags/${VERSION}" | awk '{print $1}')"
+            test "$remote_sha" = "$GITHUB_SHA" || { echo "Release tag points to a different commit" >&2; exit 1; }
+          else
+            git tag "${VERSION}" "$GITHUB_SHA"
+            git push origin "refs/tags/${VERSION}"
+          fi

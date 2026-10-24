@@ -1,0 +1,65 @@
+name: NGINX upstream update watch
+
+on:
+  schedule:
+    # Every Monday 02:17 UTC (Monday 11:17 JST).
+    - cron: '17 2 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: nginx-upstream-update-watch
+  cancel-in-progress: false
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Offline unit tests
+        run: python3 -m unittest discover -s tests -p 'test_nginx_update_watch.py' -v
+
+      - name: Compare official mainline releases and create an issue if outdated
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: python3 .github/scripts/check_nginx_updates.py
+
+  # Periodic scanning matters even when version pins do not change:
+  # new CVEs are disclosed against already published distro packages.
+  # Scan one base flavor weekly instead of rerunning the seven-flavor matrix.
+  vulnerability-scan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+
+      - name: Build pinned NGINX base image for scanning
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          file: mainline/alpine/Dockerfile
+          push: false
+          load: true
+          tags: hsxk/nginx:scheduled-scan
+          cache-from: type=gha,scope=base
+
+      - name: Trivy (fixable HIGH/CRITICAL gate)
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: hsxk/nginx:scheduled-scan
+          format: table
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
+          exit-code: '1'
