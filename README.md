@@ -39,9 +39,11 @@ digest rather than relying on a moving `latest` tag:
 hsxk/nginx:1.31.6@sha256:6f9dc3178b2740b53817d918dc211c6d124031df54f50eaaa115eeb09c0c3adc
 ```
 
+**Security notice (2026-10-24):** NGINX 1.31.6 predates the 2026-10-14 fixes for CVE-2026-15176, CVE-2026-93479, CVE-2026-95101 (HTTP/3 request-body injection), CVE-2026-97629, and CVE-2026-97205. **Do not assume `latest` is patched.** Inspect the running image with `docker exec <container> nginx -v` (or its immutable digest), verify the Docker Hub tag actually published, and upgrade production to a validated 1.31.7+ image. This branch prepares 1.31.8; merging it alone does not publish a new image (release is tag-gated).
+
 `latest` currently points at the same 1.31.6 multi-arch manifest. The main branch
-now builds 1.31.7; the published 1.31.6 references above remain accurate until
-a successful tag release publishes and verifies 1.31.7. Release
+now builds 1.31.8; the published 1.31.6 references above remain accurate until
+a successful tag release publishes and verifies 1.31.8. Release
 tags are published only after the full seven-flavor CI matrix succeeds; normal
 `main` pushes and pull requests run the same validation matrix without
 publishing an image.
@@ -50,8 +52,8 @@ publishing an image.
 
 | Component               | Version / immutable ref                         | Notes                              |
 |-------------------------|-------------------------------------------------|------------------------------------|
-| NGINX                   | `1.31.7`                                       | source SHA256 verified             |
-| Official base           | `nginx:1.31.7-alpine3.24-slim`                | pinned by OCI index digest         |
+| NGINX                   | `1.31.8`                                       | source SHA256 verified             |
+| Official base           | `nginx:1.31.8-alpine3.24-slim`                | pinned by OCI index digest         |
 | Alpine                  | `3.24`                                          | from official slim image           |
 | OpenSSL                 | `3.5.9-r0`                                      | build + runtime package pinned      |
 | headers-more-nginx      | `0.40`                                           | tarball SHA256 verified            |
@@ -90,23 +92,23 @@ release tag whose tarball is SHA256-verified at build time — flip a version
 and the matching `*_SHA256` ARG together when bumping.
 
 For this release, the NGINX source tarball SHA256 is
-`89ea8a3dc171511f7325043b50e4c036248d9fad5feb7ec809c0b82d5df42c65`.
+`0652b760b3b772d2ec17b47c2fc15d9a95e6fe35cd5b877eadc1a62d9bc75af1`.
 The official base image index is pinned to
-`sha256:b274dae54cf9792e1e8696a14081a50f29d74830d9a56a4ffcdc4bc8fb006524`.
+`sha256:296bb9f2b5a6e69c2192a14b802cb6acc89c2a1d0dd46dfe266b06e49c0b8df4`.
 
 ### How this compares to the official `nginx:alpine`
 
 Worth being precise, because the gap is narrower than it used to be. As of
-1.31.7 the official image is *also* built with `--with-http_v3_module` against
+1.31.8 the official image is *also* built with `--with-http_v3_module` against
 OpenSSL 3.5.x — HTTP/3 is no longer a reason to leave it. This image now uses
-the official `nginx:1.31.7-alpine3.24-slim` image itself as the immutable
+the official `nginx:1.31.8-alpine3.24-slim` image itself as the immutable
 runtime/build base, pinned to multi-arch digest
-`sha256:b274dae54cf9792e1e8696a14081a50f29d74830d9a56a4ffcdc4bc8fb006524`.
+`sha256:296bb9f2b5a6e69c2192a14b802cb6acc89c2a1d0dd46dfe266b06e49c0b8df4`.
 What this image adds is the third-party module set and opinionated config:
 
 | | official `nginx:alpine` | this image |
 |---|---|---|
-| nginx / OpenSSL | 1.31.7 / 3.5.x | 1.31.7 / 3.5.9 |
+| nginx / OpenSSL | 1.31.8 / 3.5.x | 1.31.8 / 3.5.9 |
 | HTTP/3 (QUIC) | yes | yes |
 | Brotli | — | `ngx_brotli` |
 | `headers-more` | — | yes |
