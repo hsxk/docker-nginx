@@ -33,6 +33,14 @@ class NginxVersionWatchTests(unittest.TestCase):
         releases = [{"tag_name": "release-1.31.8"}, {"tag_name": "release-1.33.1"}]
         self.assertEqual(WATCH.latest_mainline(releases), (1, 33, 1))
 
+    def test_real_ip_snippet_has_loopback_only_as_default_trust(self):
+        import re
+
+        conf = (Path(__file__).resolve().parents[1] /
+                "mainline/alpine/files/snippets/real-ip.conf").read_text()
+        sources = re.findall(r"^set_real_ip_from\\s+([^;]+);", conf, flags=re.MULTILINE)
+        self.assertEqual(sources, ["127.0.0.1", "::1"])
+
     def test_errors_when_upstream_api_has_no_mainline_releases(self):
         with self.assertRaises(ValueError):
             WATCH.latest_mainline([{"tag_name": "release-1.30.8"}])
