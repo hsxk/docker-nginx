@@ -1,0 +1,31 @@
+name: NGINX upstream update watch
+
+on:
+  schedule:
+    # Every Monday 02:17 UTC (Monday 11:17 JST).
+    - cron: '17 2 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: nginx-upstream-update-watch
+  cancel-in-progress: false
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Offline unit tests
+        run: python3 -m unittest discover -s tests -p 'test_nginx_update_watch.py' -v
+
+      - name: Compare official mainline releases and create an issue if outdated
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: python3 .github/scripts/check_nginx_updates.py
