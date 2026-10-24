@@ -30,9 +30,9 @@
 #
 # Keep all three values in lock-step. The first build guard below fails if the
 # official image's embedded NGINX_VERSION ever disagrees with this source build.
-ARG NGINX_VERSION=1.31.7
-ARG NGINX_FROM_IMAGE=nginx:1.31.7-alpine3.24-slim
-ARG NGINX_FROM_DIGEST=sha256:b274dae54cf9792e1e8696a14081a50f29d74830d9a56a4ffcdc4bc8fb006524
+ARG NGINX_VERSION=1.31.8
+ARG NGINX_FROM_IMAGE=nginx:1.31.8-alpine3.24-slim
+ARG NGINX_FROM_DIGEST=sha256:296bb9f2b5a6e69c2192a14b802cb6acc89c2a1d0dd46dfe266b06e49c0b8df4
 FROM ${NGINX_FROM_IMAGE}@${NGINX_FROM_DIGEST} AS builder
 ARG NGINX_VERSION
 
@@ -43,7 +43,7 @@ RUN set -eux; \
 # ─── Pinned source versions (bump deliberately) ─────────────────────────────
 # All refs are pinned to immutable commit SHAs / signed release tags. The NGINX
 # tarball checksum must be updated together with NGINX_VERSION.
-ARG NGINX_SHA256=89ea8a3dc171511f7325043b50e4c036248d9fad5feb7ec809c0b82d5df42c65
+ARG NGINX_SHA256=0652b760b3b772d2ec17b47c2fc15d9a95e6fe35cd5b877eadc1a62d9bc75af1
 
 # Keep build-time headers and runtime libssl/libcrypto on the same Alpine
 # package revision. Alpine 3.24 currently ships OpenSSL 3.5.9-r0 on the release
@@ -325,7 +325,7 @@ RUN set -eux; \
     ln -sf /dev/stdout /var/log/nginx/access.log; \
     ln -sf /dev/stderr /var/log/nginx/error.log
 
-# nginx binary + modules are built from the exact same 1.31.7 source/configure
+# nginx binary + modules are built from the exact same 1.31.8 source/configure
 # invocation, so dynamic-module ABI cannot drift away from the runtime binary.
 COPY --from=builder /usr/sbin/nginx         /usr/sbin/nginx
 COPY --from=builder /usr/lib/nginx/modules/ /usr/lib/nginx/modules/
