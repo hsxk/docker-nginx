@@ -145,7 +145,7 @@ jobs:
         run: |
           set -euo pipefail
           version="$(sed -n 's/^ARG NGINX_VERSION=//p' mainline/alpine/Dockerfile | head -1)"
-          [[ "$version" =~ ^[0-9]+\\.[0-9]+\\.[0-9]+$ ]] || { echo "invalid NGINX_VERSION" >&2; exit 1; }
+          [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "invalid NGINX_VERSION" >&2; exit 1; }
           if [[ "${GITHUB_REF_TYPE}" == "tag" && "${GITHUB_REF_NAME}" != "$version" ]]; then
             echo "Tag ${GITHUB_REF_NAME} does not match Dockerfile NGINX_VERSION $version" >&2
             exit 1
