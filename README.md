@@ -39,7 +39,7 @@ digest rather than relying on a moving `latest` tag:
 hsxk/nginx:1.31.6@sha256:6f9dc3178b2740b53817d918dc211c6d124031df54f50eaaa115eeb09c0c3adc
 ```
 
-**Security notice (2026-10-24):** NGINX 1.31.6 predates the 2026-10-14 fixes for CVE-2026-15176, CVE-2026-93479, CVE-2026-95101 (HTTP/3 request-body injection), CVE-2026-97629, and CVE-2026-97205. **Do not assume `latest` is patched.** Inspect the running image with `docker exec <container> nginx -v` (or its immutable digest), verify the Docker Hub tag actually published, and upgrade production to a validated 1.31.7+ image. This branch prepares 1.31.8; merging it alone does not publish a new image (release is tag-gated).
+**Security notice (2026-10-24):** NGINX 1.31.6 predates the 2026-10-14 fixes for CVE-2026-15176, CVE-2026-93479, CVE-2026-95101 (HTTP/3 request-body injection), CVE-2026-97629, and CVE-2026-97205. **Do not assume `latest` is patched.** Inspect the running image with `docker exec <container> nginx -v` (or its immutable digest), verify the Docker Hub tag actually published, and upgrade production to a validated 1.31.7+ image. The repository targets 1.31.8; merging alone does not publish a new image (release is tag-gated).
 
 `latest` currently points at the same 1.31.6 multi-arch manifest. The main branch
 now builds 1.31.8; the published 1.31.6 references above remain accurate until
@@ -158,6 +158,35 @@ This release also pins NGINX, the official Alpine slim base digest, source
 SHA256, and OpenSSL package revision together. Do not bump only the visible
 NGINX version; use the atomic upgrade rule below and rerun the full local/CI
 matrix.
+
+## Automated upstream update checks
+
+The [NGINX upstream update watch](.github/workflows/nginx-update-watch.yml)
+runs **every Monday at 02:17 UTC (11:17 JST)** and can also be started via
+`workflow_dispatch`. It reads official NGINX GitHub releases, compares the latest
+mainline version with the pinned Dockerfile version, and opens **one GitHub issue
+per newer version** (avoiding duplicate open issues).
+
+This is a notification workflow, **not an unattended image release**. In particular
+it does **not** change the source checksum, official base image digest, OpenSSL
+pins, Docker Hub tags, or production containers. A maintainer must review
+release notes, update pins atomically and let the full matrix/Trivy gates pass
+before explicitly releasing a signed/provenance-enabled multi-arch image.
+
+### Trusted proxy IPs (migration note)
+
+`snippets/real-ip.conf` is opt-in and now trusts **loopback only by default**.
+Previous versions trusted all RFC1918/ULA ranges, which could let an untrusted
+container on a shared bridge forge `X-Forwarded-For` and bypass IP-based rate
+limits or access controls.
+
+If you previously used this snippet behind a reverse proxy, add **only** your
+actual ingress proxy address (or a tightly controlled proxy subnet) using
+`set_real_ip_from`. Otherwise all visitors may appear to be the ingress IP and
+share one rate-limit bucket. For Cloudflare, allow only the official, current
+Cloudflare egress ranges and restrict direct origin access; preferably configure
+`real_ip_header CF-Connecting-IP;` when only Cloudflare terminates requests.
+Do not blindly enable trust in `0.0.0.0/0` or all Docker private ranges.
 
 ## Optional modules
 
