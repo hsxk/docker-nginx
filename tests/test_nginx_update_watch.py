@@ -41,6 +41,17 @@ class NginxVersionWatchTests(unittest.TestCase):
         sources = re.findall(r"^set_real_ip_from\s+([^;]+);", conf, flags=re.MULTILINE)
         self.assertEqual(sources, ["127.0.0.1", "::1"])
 
+    def test_release_can_dispatch_at_tag_and_verify_published_manifest(self):
+        workflow = (Path(__file__).resolve().parents[1] /
+                    ".github/workflows/docker-build.yml").read_text()
+        self.assertIn("github.event_name == 'workflow_dispatch'", workflow)
+        self.assertIn("startsWith(github.ref, 'refs/tags/')", workflow)
+        self.assertIn("github.ref == 'refs/heads/main'", workflow)
+        self.assertIn("git diff --exit-code", workflow)
+        self.assertIn("docker buildx imagetools inspect --raw", workflow)
+        self.assertIn('index("amd64") != null and index("arm64") != null', workflow)
+        self.assertIn("needs: ci-success", workflow)
+
     def test_errors_when_upstream_api_has_no_mainline_releases(self):
         with self.assertRaises(ValueError):
             WATCH.latest_mainline([{"tag_name": "release-1.30.8"}])
