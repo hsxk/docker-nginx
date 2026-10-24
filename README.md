@@ -24,21 +24,31 @@ replacement/clearing semantics, but it is not used to invent a global policy.
 
 Docker Hub: [`hsxk/nginx`](https://hub.docker.com/r/hsxk/nginx)
 
-The repository targets **NGINX 1.31.8** for `linux/amd64` and `linux/arm64`.
-The verified source and official base image pins live in
-[`mainline/alpine/Dockerfile`](mainline/alpine/Dockerfile).
+The published release is **NGINX 1.31.8**, available for both
+`linux/amd64` and `linux/arm64`. GitHub Actions release
+[run #95](https://github.com/hsxk/docker-nginx/actions/runs/40098337695)
+completed successfully on 2026-10-24, pushed the multi-platform image to
+Docker Hub, and validated both architectures against the registry.
 
-```sh
-# Use this AFTER the 1.31.8 GitHub Actions release job succeeds.
-docker pull hsxk/nginx:1.31.8
-docker buildx imagetools inspect hsxk/nginx:1.31.8
+**Published custom-image OCI index digest:**
+
+```text
+sha256:ac75ce5ba4c15910f0e90274f787e487e75a42c8867a55719e959adfbdc04fc9
 ```
 
-For production, pin the **published** `hsxk/nginx:1.31.8` multi-arch manifest
-digest returned by the command above. The official upstream `nginx:1.31.8`
-base image digest in the Dockerfile is a **different** digest and must not be
-used to pin `hsxk/nginx`. Do not infer successful publication from a green PR:
-the release job must also push and verify the output.
+```sh
+docker pull hsxk/nginx:1.31.8
+docker buildx imagetools inspect hsxk/nginx:1.31.8
+
+# For immutable production pinning, use the custom-image index digest.
+docker pull hsxk/nginx:1.31.8@sha256:ac75ce5ba4c15910f0e90274f787e487e75a42c8867a55719e959adfbdc04fc9
+```
+
+This is the digest of **`hsxk/nginx`**, not the upstream base image.
+The official upstream `nginx:1.31.8-alpine3.24-slim` has a different
+pinned digest in [`mainline/alpine/Dockerfile`](mainline/alpine/Dockerfile).
+The Docker Hub `latest` tag was updated to this same 1.31.8 release, but
+production deployments should continue to use the immutable digest.
 
 **Security notice (2026-10-24):** The older published `hsxk/nginx:1.31.6`
 predates the October 14 upstream security fixes (CVE-2026-15176,
@@ -50,8 +60,11 @@ The full seven-flavor matrix and Trivy gate run on PR/main/tag pushes.
 Ordinary PR/main pushes do not publish. Publishing requires either a reviewed
 version-matching Git tag, or an **explicit** `[publish-image]` marker in a
 reviewed `main` merge commit. In both cases, the release job waits for the
-full CI matrix and pushes the multi-arch version tag plus `latest`. The
-marked main flow records the matching Git tag **after** the Docker Hub push.
+full CI matrix and pushes the multi-arch version tag plus `latest`. A
+`workflow_dispatch` on main/tag is also explicitly supported. Publication
+must pass registry manifest validation for both architectures; a source-identical
+existing version tag is preserved, and a missing tag is created after a
+successful main publication.
 
 ## What's in the image
 
