@@ -43,10 +43,12 @@ hsxk/nginx:1.31.6@sha256:6f9dc3178b2740b53817d918dc211c6d124031df54f50eaaa115eeb
 
 `latest` currently points at the same 1.31.6 multi-arch manifest. The main branch
 now builds 1.31.8; the published 1.31.6 references above remain accurate until
-a successful tag release publishes and verifies 1.31.8. Release
-tags are published only after the full seven-flavor CI matrix succeeds; normal
-`main` pushes and pull requests run the same validation matrix without
-publishing an image.
+a successful tag release publishes and verifies 1.31.8. Release tags are published only after the full seven-flavor CI matrix succeeds;
+normal `main` pushes and pull requests run validation without publishing.
+A reviewed `main` merge whose commit message explicitly includes `[publish-image]`
+also publishes the validated pinned version (`hsxk/nginx:<NGINX_VERSION>` and
+`latest`) and creates the matching git tag after successful Docker Hub push.
+The scheduled upstream watcher **never** includes this marker or publishes.
 
 ## What's in the image
 
