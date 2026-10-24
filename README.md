@@ -24,31 +24,34 @@ replacement/clearing semantics, but it is not used to invent a global policy.
 
 Docker Hub: [`hsxk/nginx`](https://hub.docker.com/r/hsxk/nginx)
 
-The current release is **NGINX 1.31.6** for `linux/amd64` and
-`linux/arm64`:
+The repository targets **NGINX 1.31.8** for `linux/amd64` and `linux/arm64`.
+The verified source and official base image pins live in
+[`mainline/alpine/Dockerfile`](mainline/alpine/Dockerfile).
 
 ```sh
-docker pull hsxk/nginx:1.31.6
-docker pull hsxk/nginx:latest
+# Use this AFTER the 1.31.8 GitHub Actions release job succeeds.
+docker pull hsxk/nginx:1.31.8
+docker buildx imagetools inspect hsxk/nginx:1.31.8
 ```
 
-For production deployments, prefer the version tag or immutable manifest
-digest rather than relying on a moving `latest` tag:
+For production, pin the **published** `hsxk/nginx:1.31.8` multi-arch manifest
+digest returned by the command above. The official upstream `nginx:1.31.8`
+base image digest in the Dockerfile is a **different** digest and must not be
+used to pin `hsxk/nginx`. Do not infer successful publication from a green PR:
+the release job must also push and verify the output.
 
-```text
-hsxk/nginx:1.31.6@sha256:6f9dc3178b2740b53817d918dc211c6d124031df54f50eaaa115eeb09c0c3adc
-```
+**Security notice (2026-10-24):** The older published `hsxk/nginx:1.31.6`
+predates the October 14 upstream security fixes (CVE-2026-15176,
+CVE-2026-93479, CVE-2026-95101, CVE-2026-97629, CVE-2026-97205).
+Do not deploy this historical tag to production. Validate the *running*
+binary (`docker exec <container> nginx -v`) and the image digest.
 
-**Security notice (2026-10-24):** NGINX 1.31.6 predates the 2026-10-14 fixes for CVE-2026-15176, CVE-2026-93479, CVE-2026-95101 (HTTP/3 request-body injection), CVE-2026-97629, and CVE-2026-97205. **Do not assume `latest` is patched.** Inspect the running image with `docker exec <container> nginx -v` (or its immutable digest), verify the Docker Hub tag actually published, and upgrade production to a validated 1.31.7+ image. The repository targets 1.31.8; merging alone does not publish a new image (release is tag-gated).
-
-`latest` currently points at the same 1.31.6 multi-arch manifest. The main branch
-now builds 1.31.8; the published 1.31.6 references above remain accurate until
-a successful tag release publishes and verifies 1.31.8. Release tags are published only after the full seven-flavor CI matrix succeeds;
-normal `main` pushes and pull requests run validation without publishing.
-A reviewed `main` merge whose commit message explicitly includes `[publish-image]`
-also publishes the validated pinned version (`hsxk/nginx:<NGINX_VERSION>` and
-`latest`) and creates the matching git tag after successful Docker Hub push.
-The scheduled upstream watcher **never** includes this marker or publishes.
+The full seven-flavor matrix and Trivy gate run on PR/main/tag pushes.
+Ordinary PR/main pushes do not publish. Publishing requires either a reviewed
+version-matching Git tag, or an **explicit** `[publish-image]` marker in a
+reviewed `main` merge commit. In both cases, the release job waits for the
+full CI matrix and pushes the multi-arch version tag plus `latest`. The
+marked main flow records the matching Git tag **after** the Docker Hub push.
 
 ## What's in the image
 
@@ -265,7 +268,7 @@ configuration** gives you a working HTTP/3 server on a self-signed cert:
 ```sh
 docker run -d --name nginx \
   -p 80:80/tcp -p 443:443/tcp -p 443:443/udp \
-  hsxk/nginx:1.31.6
+  hsxk/nginx:1.31.8
 # → https://localhost/  shows "It works."   (browser will warn — self-signed)
 # → https://localhost/healthz  returns 200 ok
 ```
@@ -284,7 +287,7 @@ docker run -d --name nginx \
   -p 80:80 -p 443:443/tcp -p 443:443/udp \
   -v $PWD/my-conf.d:/etc/nginx/conf.d:ro \
   -v letsencrypt:/etc/letsencrypt \
-  hsxk/nginx:1.31.6
+  hsxk/nginx:1.31.8
 ```
 
 The moment you mount anything into `conf.d/`, the built-in default is
