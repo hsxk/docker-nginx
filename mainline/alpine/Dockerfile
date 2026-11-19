@@ -46,9 +46,9 @@ RUN set -eux; \
 ARG NGINX_SHA256=a11c5eeee2e257f4478f0e649f84b0040787d277d2d3e5233952aa6b6dcb80ad
 
 # Keep build-time headers and runtime libssl/libcrypto on the same Alpine
-# package revision. Alpine 3.24 currently ships OpenSSL 3.5.9-r0 on the release
+# package revision. Alpine 3.24 currently ships OpenSSL 3.5.9-r1 on the release
 # architectures used here (amd64/arm64).
-ARG OPENSSL_PACKAGE_VERSION=3.5.9-r0
+ARG OPENSSL_PACKAGE_VERSION=3.5.9-r1
 
 ARG HEADERS_MORE_VERSION=0.40
 ARG HEADERS_MORE_SHA256=c14cb5e6c998590c209efbf77bd7637ce2cab02332e4192756a8af5b26ba4284
@@ -282,7 +282,7 @@ FROM ${NGINX_FROM_IMAGE}@${NGINX_FROM_DIGEST}
 ARG NGINX_VERSION
 ARG NGINX_FROM_IMAGE
 ARG NGINX_FROM_DIGEST
-ARG OPENSSL_PACKAGE_VERSION=3.5.9-r0
+ARG OPENSSL_PACKAGE_VERSION=3.5.9-r1
 
 RUN set -eux; \
     image_version="$(nginx -v 2>&1 | sed 's#^nginx version: nginx/##')"; \
