@@ -30,9 +30,9 @@
 #
 # Keep all three values in lock-step. The first build guard below fails if the
 # official image's embedded NGINX_VERSION ever disagrees with this source build.
-ARG NGINX_VERSION=1.31.8
-ARG NGINX_FROM_IMAGE=nginx:1.31.8-alpine3.24-slim
-ARG NGINX_FROM_DIGEST=sha256:296bb9f2b5a6e69c2192a14b802cb6acc89c2a1d0dd46dfe266b06e49c0b8df4
+ARG NGINX_VERSION=1.31.9
+ARG NGINX_FROM_IMAGE=nginx:1.31.9-alpine3.24-slim
+ARG NGINX_FROM_DIGEST=sha256:5bfced78d24d644270bedb0a9968697042e38d5c03fb6354603df025279c1cbe
 FROM ${NGINX_FROM_IMAGE}@${NGINX_FROM_DIGEST} AS builder
 ARG NGINX_VERSION
 
@@ -43,12 +43,12 @@ RUN set -eux; \
 # ─── Pinned source versions (bump deliberately) ─────────────────────────────
 # All refs are pinned to immutable commit SHAs / signed release tags. The NGINX
 # tarball checksum must be updated together with NGINX_VERSION.
-ARG NGINX_SHA256=0652b760b3b772d2ec17b47c2fc15d9a95e6fe35cd5b877eadc1a62d9bc75af1
+ARG NGINX_SHA256=a11c5eeee2e257f4478f0e649f84b0040787d277d2d3e5233952aa6b6dcb80ad
 
 # Keep build-time headers and runtime libssl/libcrypto on the same Alpine
-# package revision. Alpine 3.24 currently ships OpenSSL 3.5.9-r0 on the release
+# package revision. Alpine 3.24 currently ships OpenSSL 3.5.9-r1 on the release
 # architectures used here (amd64/arm64).
-ARG OPENSSL_PACKAGE_VERSION=3.5.9-r0
+ARG OPENSSL_PACKAGE_VERSION=3.5.9-r1
 
 ARG HEADERS_MORE_VERSION=0.40
 ARG HEADERS_MORE_SHA256=c14cb5e6c998590c209efbf77bd7637ce2cab02332e4192756a8af5b26ba4284
@@ -282,7 +282,7 @@ FROM ${NGINX_FROM_IMAGE}@${NGINX_FROM_DIGEST}
 ARG NGINX_VERSION
 ARG NGINX_FROM_IMAGE
 ARG NGINX_FROM_DIGEST
-ARG OPENSSL_PACKAGE_VERSION=3.5.9-r0
+ARG OPENSSL_PACKAGE_VERSION=3.5.9-r1
 
 RUN set -eux; \
     image_version="$(nginx -v 2>&1 | sed 's#^nginx version: nginx/##')"; \
@@ -325,7 +325,7 @@ RUN set -eux; \
     ln -sf /dev/stdout /var/log/nginx/access.log; \
     ln -sf /dev/stderr /var/log/nginx/error.log
 
-# nginx binary + modules are built from the exact same 1.31.8 source/configure
+# nginx binary + modules are built from the exact same 1.31.9 source/configure
 # invocation, so dynamic-module ABI cannot drift away from the runtime binary.
 COPY --from=builder /usr/sbin/nginx         /usr/sbin/nginx
 COPY --from=builder /usr/lib/nginx/modules/ /usr/lib/nginx/modules/

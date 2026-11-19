@@ -13,7 +13,7 @@ SPEC.loader.exec_module(WATCH)
 class NginxVersionWatchTests(unittest.TestCase):
     def test_pinned_version_from_real_dockerfile(self):
         dockerfile = (Path(__file__).resolve().parents[1] / "mainline/alpine/Dockerfile").read_text()
-        self.assertEqual(WATCH.current_version(dockerfile), (1, 31, 8))
+        self.assertEqual(WATCH.current_version(dockerfile), (1, 31, 9))
 
     def test_fail_closed_if_version_missing(self):
         with self.assertRaises(ValueError):
