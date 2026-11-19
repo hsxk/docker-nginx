@@ -24,31 +24,38 @@ replacement/clearing semantics, but it is not used to invent a global policy.
 
 Docker Hub: [`hsxk/nginx`](https://hub.docker.com/r/hsxk/nginx)
 
-The published release is **NGINX 1.31.8**, available for both
+The published release is **NGINX 1.31.9**, available for both
 `linux/amd64` and `linux/arm64`. GitHub Actions release
-[run #95](https://github.com/hsxk/docker-nginx/actions/runs/40098337695)
-completed successfully on 2026-10-24, pushed the multi-platform image to
-Docker Hub, and validated both architectures against the registry.
+[run #102](https://github.com/hsxk/docker-nginx/actions/runs/44483472795)
+completed successfully on 2026-11-19, passed all seven build flavors and the
+Trivy gate, pushed the multi-platform image to Docker Hub, and validated both
+architectures against the registry.
 
 **Published custom-image OCI index digest:**
 
 ```text
-sha256:ac75ce5ba4c15910f0e90274f787e487e75a42c8867a55719e959adfbdc04fc9
+sha256:73a0ff84a4eb3f1f2fe4a23378e613d22cb303ea363da465abd144e34b0aea1d
 ```
 
 ```sh
-docker pull hsxk/nginx:1.31.8
-docker buildx imagetools inspect hsxk/nginx:1.31.8
+docker pull hsxk/nginx:1.31.9
+docker buildx imagetools inspect hsxk/nginx:1.31.9
 
 # For immutable production pinning, use the custom-image index digest.
-docker pull hsxk/nginx:1.31.8@sha256:ac75ce5ba4c15910f0e90274f787e487e75a42c8867a55719e959adfbdc04fc9
+docker pull hsxk/nginx:1.31.9@sha256:73a0ff84a4eb3f1f2fe4a23378e613d22cb303ea363da465abd144e34b0aea1d
 ```
 
 This is the digest of **`hsxk/nginx`**, not the upstream base image.
-The official upstream `nginx:1.31.8-alpine3.24-slim` has a different
+The official upstream `nginx:1.31.9-alpine3.24-slim` has a different
 pinned digest in [`mainline/alpine/Dockerfile`](mainline/alpine/Dockerfile).
-The Docker Hub `latest` tag was updated to this same 1.31.8 release, but
+The Docker Hub `latest` tag was updated to this same 1.31.9 release, but
 production deployments should continue to use the immutable digest.
+
+**Security notice (2026-11-19):** The historical `hsxk/nginx:1.31.8`
+tag predates the November 18 upstream security fixes, including
+CVE-2026-123007, CVE-2026-121810, and CVE-2026-123634. Do not deploy it
+to production; update to `hsxk/nginx:1.31.9` and verify the running binary.
+Release tags are immutable and are **not** backpatched.
 
 **Security notice (2026-10-24):** The older published `hsxk/nginx:1.31.6`
 predates the October 14 upstream security fixes (CVE-2026-15176,
@@ -70,10 +77,10 @@ successful main publication.
 
 | Component               | Version / immutable ref                         | Notes                              |
 |-------------------------|-------------------------------------------------|------------------------------------|
-| NGINX                   | `1.31.8`                                       | source SHA256 verified             |
-| Official base           | `nginx:1.31.8-alpine3.24-slim`                | pinned by OCI index digest         |
+| NGINX                   | `1.31.9`                                       | source SHA256 verified             |
+| Official base           | `nginx:1.31.9-alpine3.24-slim`                | pinned by OCI index digest         |
 | Alpine                  | `3.24`                                          | from official slim image           |
-| OpenSSL                 | `3.5.9-r0`                                      | build + runtime package pinned      |
+| OpenSSL                 | `3.5.9-r1`                                      | build + runtime package pinned      |
 | headers-more-nginx      | `0.40`                                           | tarball SHA256 verified            |
 | ngx_brotli              | `a71f9312c2deb28875acc7bacfdd5695a111aa53`    | google/ngx_brotli                  |
 | ngx_cache_purge         | `a6da1352f52a8a02dd6828e88c39ed42fddcee96`    | upstream lists tested through 1.29; this image runs a live purge smoke test |
@@ -110,23 +117,23 @@ release tag whose tarball is SHA256-verified at build time — flip a version
 and the matching `*_SHA256` ARG together when bumping.
 
 For this release, the NGINX source tarball SHA256 is
-`0652b760b3b772d2ec17b47c2fc15d9a95e6fe35cd5b877eadc1a62d9bc75af1`.
+`a11c5eeee2e257f4478f0e649f84b0040787d277d2d3e5233952aa6b6dcb80ad`.
 The official base image index is pinned to
-`sha256:296bb9f2b5a6e69c2192a14b802cb6acc89c2a1d0dd46dfe266b06e49c0b8df4`.
+`sha256:5bfced78d24d644270bedb0a9968697042e38d5c03fb6354603df025279c1cbe`.
 
 ### How this compares to the official `nginx:alpine`
 
 Worth being precise, because the gap is narrower than it used to be. As of
-1.31.8 the official image is *also* built with `--with-http_v3_module` against
+1.31.9 the official image is *also* built with `--with-http_v3_module` against
 OpenSSL 3.5.x — HTTP/3 is no longer a reason to leave it. This image now uses
-the official `nginx:1.31.8-alpine3.24-slim` image itself as the immutable
+the official `nginx:1.31.9-alpine3.24-slim` image itself as the immutable
 runtime/build base, pinned to multi-arch digest
-`sha256:296bb9f2b5a6e69c2192a14b802cb6acc89c2a1d0dd46dfe266b06e49c0b8df4`.
+`sha256:5bfced78d24d644270bedb0a9968697042e38d5c03fb6354603df025279c1cbe`.
 What this image adds is the third-party module set and opinionated config:
 
 | | official `nginx:alpine` | this image |
 |---|---|---|
-| nginx / OpenSSL | 1.31.8 / 3.5.x | 1.31.8 / 3.5.9 |
+| nginx / OpenSSL | 1.31.9 / 3.5.x | 1.31.9 / 3.5.9 |
 | HTTP/3 (QUIC) | yes | yes |
 | Brotli | — | `ngx_brotli` |
 | `headers-more` | — | yes |
@@ -284,7 +291,7 @@ configuration** gives you a working HTTP/3 server on a self-signed cert:
 ```sh
 docker run -d --name nginx \
   -p 80:80/tcp -p 443:443/tcp -p 443:443/udp \
-  hsxk/nginx:1.31.8
+  hsxk/nginx:1.31.9
 # → https://localhost/  shows "It works."   (browser will warn — self-signed)
 # → https://localhost/healthz  returns 200 ok
 ```
@@ -303,7 +310,7 @@ docker run -d --name nginx \
   -p 80:80 -p 443:443/tcp -p 443:443/udp \
   -v $PWD/my-conf.d:/etc/nginx/conf.d:ro \
   -v letsencrypt:/etc/letsencrypt \
-  hsxk/nginx:1.31.8
+  hsxk/nginx:1.31.9
 ```
 
 The moment you mount anything into `conf.d/`, the built-in default is
